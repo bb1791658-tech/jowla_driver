@@ -3,11 +3,12 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../core/services/place_name_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../rides/domain/models/ride_offer.dart';
+import '../../rides/presentation/ride_formatters.dart';
 
 /// بطاقة عرض الرحلة الوارد عبر ride:offer:new.
 ///
@@ -22,6 +23,7 @@ class RideRequestSheet extends StatefulWidget {
     required this.onAccept,
     required this.onReject,
     required this.onTimeout,
+    this.offerVisibleUntil,
     this.offerPosition = 1,
     this.offerCount = 1,
     this.onPreviousOffer,
@@ -35,6 +37,7 @@ class RideRequestSheet extends StatefulWidget {
   final VoidCallback onAccept;
   final VoidCallback onReject;
   final VoidCallback onTimeout;
+  final DateTime? offerVisibleUntil;
   final int offerPosition;
   final int offerCount;
   final VoidCallback? onPreviousOffer;
@@ -57,15 +60,34 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
   @override
   void initState() {
     super.initState();
-    _remaining = _displayDuration;
+    _remaining = _initialRemaining();
     _totalDuration = _displayDuration;
     _expiryTimer = Timer(_remaining, _notifyTimeout);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      final remaining = _remaining - const Duration(seconds: 1);
+      final remaining = _initialRemaining();
       setState(() => _remaining = remaining);
       if (remaining <= Duration.zero) _notifyTimeout();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant RideRequestSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.offer.offerId != widget.offer.offerId ||
+        oldWidget.offerVisibleUntil != widget.offerVisibleUntil) {
+      _ticker?.cancel();
+      _expiryTimer?.cancel();
+      _timeoutSent = false;
+      _remaining = _initialRemaining();
+      _expiryTimer = Timer(_remaining, _notifyTimeout);
+      _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        final remaining = _initialRemaining();
+        setState(() => _remaining = remaining);
+        if (remaining <= Duration.zero) _notifyTimeout();
+      });
+    }
   }
 
   void _notifyTimeout() {
@@ -80,6 +102,14 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
     _ticker?.cancel();
     _expiryTimer?.cancel();
     super.dispose();
+  }
+
+  Duration _initialRemaining() {
+    final visibleUntil = widget.offerVisibleUntil;
+    if (visibleUntil == null) return _displayDuration;
+    final remaining = visibleUntil.difference(DateTime.now());
+    if (remaining <= Duration.zero) return Duration.zero;
+    return remaining > _displayDuration ? _displayDuration : remaining;
   }
 
   @override
@@ -97,110 +127,103 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
         ? 'مسافة الرحلة'
         : formatDistance(ride!.distanceKm!);
     final tripMinutes = ride?.durationMinutes;
-    final pickupAddress =
-        ride?.pickupAddress ?? 'موقع الراكب عند نقطة الانطلاق';
-    final destinationName =
-        ride?.dropoffAddress ?? 'الوجهة التي اختارها الراكب';
+    final pickupAddress = ride?.pickupAddress;
+    final destinationName = ride?.dropoffAddress;
     final progress = _countdownProgress();
 
     return SizedBox(
       width: double.infinity,
       child: Material(
-        color: const Color(0xFF111317),
-        elevation: 24,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
+        color: Colors.white,
+        elevation: 18,
+        shadowColor: Colors.black.withValues(alpha: 0.18),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
           top: false,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE3E8E5),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  key: const ValueKey('ride-offer-price'),
+                  '${formatIqd(offer.estimatedFare ?? ride?.estimatedFare)} د.ع',
+                  textAlign: TextAlign.center,
+                  textDirection: ui.TextDirection.rtl,
+                  style: const TextStyle(
+                    color: Color(0xFF111317),
+                    fontSize: 36,
+                    height: 1.05,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Divider(height: 1, color: Color(0xFFE9EEEB)),
+                const SizedBox(height: 14),
+                Directionality(
+                  textDirection: ui.TextDirection.rtl,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _TimelineRow(
+                        icon: Icons.person_outline_rounded,
+                        iconColor: AppTheme.primaryGreen,
+                        label: 'نقطة الانطلاق',
+                        metric: pickupAddress,
+                        metricPoint: ride?.pickup ?? offer.pickup,
+                        place: pickupDistanceText,
+                        placePoint: ride?.pickup ?? offer.pickup,
+                        isLast: false,
+                      ),
+                      _TimelineRow(
+                        icon: Icons.location_on_outlined,
+                        iconColor: const Color(0xFFE53935),
+                        label: 'الوجهة',
+                        metric: destinationName,
+                        metricPoint: ride?.dropoff,
+                        place: tripDistanceText,
+                        placePoint: ride?.dropoff,
+                        isLast: true,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Row(
                   textDirection: ui.TextDirection.rtl,
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          key: const ValueKey('ride-offer-price'),
-                          formatIqd(offer.estimatedFare ?? ride?.estimatedFare),
-                          textAlign: TextAlign.right,
-                          textDirection: ui.TextDirection.rtl,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 38,
-                            height: 1,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        const Text(
-                          'دينار',
-                          textAlign: TextAlign.right,
-                          textDirection: ui.TextDirection.rtl,
-                          style: TextStyle(
-                            color: Color(0xFFC9CDD3),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            height: 1.1,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Expanded(child: SizedBox(height: 1)),
-                    if (widget.offerCount > 1)
-                      _OfferSwitcher(
-                        position: widget.offerPosition,
-                        count: widget.offerCount,
-                        isDisabled: widget.isResponding,
-                        onPrevious: widget.onPreviousOffer,
-                        onNext: widget.onNextOffer,
+                    Expanded(
+                      child: _TripStat(
+                        icon: Icons.schedule_rounded,
+                        label: 'الوقت المتوقع',
+                        value: formatMinutes(tripMinutes ?? pickupMinutes),
                       ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _TripStat(
+                        icon: Icons.route_rounded,
+                        label: 'المسافة',
+                        value: tripDistanceText,
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 18),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Align(
-                      alignment: Alignment.centerRight,
-                      child: SizedBox(
-                        width: constraints.maxWidth * 0.82,
-                        child: Directionality(
-                          textDirection: ui.TextDirection.rtl,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              _TimelineRow(
-                                icon: Icons.circle,
-                                iconColor: AppTheme.primaryGreen,
-                                label: 'الانطلاق',
-                                metric:
-                                    '${formatMinutes(pickupMinutes)} - $pickupDistanceText',
-                                place: pickupAddress,
-                                isLast: false,
-                              ),
-                              _TimelineRow(
-                                icon: Icons.stop_rounded,
-                                iconColor: Colors.white,
-                                label: 'الوصول',
-                                metric:
-                                    '${formatMinutes(tripMinutes)} - $tripDistanceText',
-                                place: destinationName,
-                                isLast: true,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 14),
                 Row(
                   textDirection: ui.TextDirection.ltr,
                   children: [
@@ -241,111 +264,25 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
   }
 }
 
-class _OfferSwitcher extends StatelessWidget {
-  const _OfferSwitcher({
-    required this.position,
-    required this.count,
-    required this.isDisabled,
-    required this.onPrevious,
-    required this.onNext,
-  });
-
-  final int position;
-  final int count;
-  final bool isDisabled;
-  final VoidCallback? onPrevious;
-  final VoidCallback? onNext;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: const ValueKey('ride-offer-switcher'),
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1E23),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF2B3330)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        textDirection: ui.TextDirection.ltr,
-        children: [
-          _OfferSwitchButton(
-            key: const ValueKey('ride-offer-previous'),
-            icon: Icons.chevron_left_rounded,
-            isDisabled: isDisabled,
-            onPressed: onPrevious,
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              key: const ValueKey('ride-offer-switcher-label'),
-              '${formatNumber(position)} / ${formatNumber(count)}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                height: 1,
-              ),
-            ),
-          ),
-          _OfferSwitchButton(
-            key: const ValueKey('ride-offer-next'),
-            icon: Icons.chevron_right_rounded,
-            isDisabled: isDisabled,
-            onPressed: onNext,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OfferSwitchButton extends StatelessWidget {
-  const _OfferSwitchButton({
-    required super.key,
-    required this.icon,
-    required this.isDisabled,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final bool isDisabled;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox.square(
-      dimension: 30,
-      child: IconButton(
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        iconSize: 22,
-        color: Colors.white,
-        disabledColor: Colors.white.withValues(alpha: 0.35),
-        onPressed: isDisabled ? null : onPressed,
-        icon: Icon(icon),
-      ),
-    );
-  }
-}
-
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
     required this.icon,
     required this.iconColor,
     required this.label,
     required this.metric,
+    required this.metricPoint,
     required this.place,
+    required this.placePoint,
     required this.isLast,
   });
 
   final IconData icon;
   final Color iconColor;
   final String label;
-  final String metric;
-  final String place;
+  final String? metric;
+  final LatLng? metricPoint;
+  final String? place;
+  final LatLng? placePoint;
   final bool isLast;
 
   @override
@@ -369,8 +306,8 @@ class _TimelineRow extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 17,
+                      color: Color(0xFF17251C),
+                      fontSize: 14,
                       fontWeight: FontWeight.w900,
                       height: 1.1,
                     ),
@@ -379,15 +316,13 @@ class _TimelineRow extends StatelessWidget {
                 const SizedBox(height: 4),
                 SizedBox(
                   width: double.infinity,
-                  child: Text(
-                    metric,
-                    textAlign: TextAlign.right,
-                    textDirection: ui.TextDirection.rtl,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: _PlaceNameText(
+                    place: metric,
+                    point: metricPoint,
+                    fallback: 'جار تحديد اسم الموقع',
                     style: const TextStyle(
-                      color: Color(0xFFF2F4F7),
-                      fontSize: 18,
+                      color: Color(0xFF566258),
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
                       height: 1.15,
                     ),
@@ -396,19 +331,7 @@ class _TimelineRow extends StatelessWidget {
                 const SizedBox(height: 5),
                 SizedBox(
                   width: double.infinity,
-                  child: Text(
-                    place,
-                    textAlign: TextAlign.right,
-                    textDirection: ui.TextDirection.rtl,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFC9CDD3),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      height: 1.25,
-                    ),
-                  ),
+                  child: _PlaceNameText(place: place, point: placePoint),
                 ),
               ],
             ),
@@ -425,7 +348,7 @@ class _TimelineRow extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: icon == Icons.circle
                       ? iconColor.withValues(alpha: 0.18)
-                      : Colors.transparent,
+                      : iconColor.withValues(alpha: 0.10),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(icon, color: iconColor, size: 17),
@@ -436,7 +359,7 @@ class _TimelineRow extends StatelessWidget {
                   height: 48,
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF4D5664),
+                    color: const Color(0xFFD7E0DA),
                     borderRadius: BorderRadius.circular(1),
                   ),
                 ),
@@ -444,6 +367,118 @@ class _TimelineRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _PlaceNameText extends StatelessWidget {
+  const _PlaceNameText({
+    required this.place,
+    required this.point,
+    this.fallback = 'جار تحديد اسم الموقع',
+    this.style = _style,
+  });
+
+  final String? place;
+  final LatLng? point;
+  final String fallback;
+  final TextStyle style;
+
+  static const _style = TextStyle(
+    color: Color(0xFF8A958E),
+    fontSize: 12,
+    fontWeight: FontWeight.w700,
+    height: 1.25,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final existing = place?.trim();
+    if (existing != null && existing.isNotEmpty) return _text(existing);
+    final target = point;
+    if (target == null) return _text(fallback);
+
+    return FutureBuilder<String?>(
+      future: PlaceNameService.instance.nameFor(target),
+      builder: (context, snapshot) {
+        final resolved = snapshot.data?.trim();
+        if (resolved != null && resolved.isNotEmpty) return _text(resolved);
+        return _text(fallback);
+      },
+    );
+  }
+
+  Widget _text(String value) {
+    return Text(
+      value,
+      textAlign: TextAlign.right,
+      textDirection: ui.TextDirection.rtl,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: style,
+    );
+  }
+}
+
+class _TripStat extends StatelessWidget {
+  const _TripStat({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 54),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAFBFA),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE8EEEA)),
+      ),
+      child: Row(
+        textDirection: ui.TextDirection.rtl,
+        children: [
+          Icon(icon, color: const Color(0xFF5F6A62), size: 22),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF8A958E),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF17251C),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -561,35 +596,4 @@ class _RejectButton extends StatelessWidget {
       ),
     );
   }
-}
-
-String formatMinutes(int? minutes) =>
-    minutes == null ? 'وقت الوصول' : '${formatNumber(minutes)} دقيقة';
-
-String formatDistance(double km) {
-  if (km < 1) {
-    return '${formatNumber((km * 1000).round())} متر';
-  }
-  final value = km >= 10 ? km.round().toString() : km.toStringAsFixed(1);
-  return '${formatNumberText(value)} كيلومتر';
-}
-
-/// تنسيق المبلغ بالدينار العراقي بأرقام عربية.
-String formatIqd(double? amount) {
-  if (amount == null) return 'السعر';
-  return formatNumberText(
-    NumberFormat.decimalPattern('ar_IQ').format(amount.round()),
-  );
-}
-
-String formatNumber(num value) =>
-    formatNumberText(NumberFormat.decimalPattern('ar_IQ').format(value));
-
-String formatNumberText(String value) {
-  const western = '0123456789.,';
-  const eastern = '٠١٢٣٤٥٦٧٨٩٫٬';
-  return value.split('').map((char) {
-    final index = western.indexOf(char);
-    return index == -1 ? char : eastern[index];
-  }).join();
 }

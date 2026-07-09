@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,8 +13,8 @@ import '../../home/application/driver_home_controller.dart';
 import '../../home/presentation/widgets/driver_map_car_marker.dart';
 import '../../home/presentation/widgets/trip_map_markers.dart';
 import '../../rides/domain/models/ride.dart';
-import '../../trip_requests/presentation/ride_request_sheet.dart'
-    show formatIqd;
+import '../../rides/presentation/ride_formatters.dart';
+import '../application/trip_navigation_options.dart';
 import '../application/trip_controller.dart';
 
 class TripScreen extends ConsumerWidget {
@@ -122,6 +123,9 @@ class _ActiveTripScreen extends ConsumerWidget {
                   initialZoom: 14,
                   minZoom: 5,
                   maxZoom: 18,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                  ),
                 ),
                 children: [
                   TileLayer(
@@ -154,9 +158,9 @@ class _ActiveTripScreen extends ConsumerWidget {
                         Marker(
                           point: driverPoint,
                           width: 56,
-                          height: 86,
+                          height: 102,
                           child: Transform.translate(
-                            offset: const Offset(0, 30),
+                            offset: const Offset(0, 44),
                             child: DriverMapCarMarker(
                               headingDegrees: position?.heading,
                               width: 28,
@@ -164,16 +168,26 @@ class _ActiveTripScreen extends ConsumerWidget {
                             ),
                           ),
                         ),
+                      if (headingToPickup)
+                        Marker(
+                          alignment: Alignment.bottomCenter,
+                          rotate: true,
+                          point: ride.pickup,
+                          width: PickupMapMarker.markerWidth,
+                          height: PickupMapMarker.markerHeight(
+                            showCarBelowPickup ? 8 : 0,
+                          ),
+                          child: PickupMapMarker(
+                            distanceKm: pickupDistanceKm,
+                            liftPixels: showCarBelowPickup ? 8 : 0,
+                          ),
+                        ),
                       Marker(
-                        point: ride.pickup,
-                        width: 132,
-                        height: 48,
-                        child: PickupMapMarker(distanceKm: pickupDistanceKm),
-                      ),
-                      Marker(
+                        alignment: Alignment.bottomCenter,
+                        rotate: true,
                         point: ride.dropoff,
-                        width: 58,
-                        height: 72,
+                        width: DropoffMapMarker.markerWidth,
+                        height: DropoffMapMarker.markerHeight,
                         child: const DropoffMapMarker(),
                       ),
                     ],
@@ -251,32 +265,67 @@ Future<void> _openNavigation(
   BuildContext context, {
   required LatLng destination,
 }) async {
-  final lat = destination.latitude.toStringAsFixed(7);
-  final lng = destination.longitude.toStringAsFixed(7);
-  final urls = [
-    Uri.parse('google.navigation:q=$lat,$lng&mode=d'),
-    Uri.parse('waze://?ll=$lat,$lng&navigate=yes'),
-    Uri.parse('comgooglemaps://?daddr=$lat,$lng&directionsmode=driving'),
-    Uri.parse('geo:$lat,$lng?q=$lat,$lng'),
-    Uri.https('www.google.com', '/maps/dir/', {
-      'api': '1',
-      'destination': '$lat,$lng',
-      'travelmode': 'driving',
-    }),
-  ];
-
-  for (final url in urls) {
-    try {
-      if (await launchUrl(url, mode: LaunchMode.externalApplication)) return;
-    } catch (_) {
-      continue;
-    }
-  }
+  final available = await availableTripNavigationOptions(
+    destination: destination,
+    platform: defaultTargetPlatform,
+    canOpen: canLaunchUrl,
+  );
 
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('تعذر فتح تطبيق الملاحة على هذا الجهاز.')),
+  final selected = await showModalBottomSheet<TripNavigationOption>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                'اختر تطبيق الملاحة',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          for (final option in available)
+            ListTile(
+              leading: Icon(_navigationIcon(option.app)),
+              title: Text(option.title),
+              onTap: () => Navigator.pop(context, option),
+            ),
+        ],
+      ),
+    ),
   );
+  if (selected == null) return;
+
+  try {
+    final launched = await launchUrl(
+      selected.url,
+      mode: LaunchMode.externalApplication,
+    );
+    if (launched) return;
+  } catch (_) {}
+
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تعذر فتح تطبيق الملاحة على هذا الجهاز.')),
+    );
+  }
+}
+
+IconData _navigationIcon(TripNavigationApp app) {
+  return switch (app) {
+    TripNavigationApp.appleMaps => Icons.map_rounded,
+    TripNavigationApp.googleMaps => Icons.map_outlined,
+    TripNavigationApp.waze => Icons.navigation_rounded,
+    TripNavigationApp.systemMaps => Icons.assistant_direction_rounded,
+    TripNavigationApp.browser => Icons.public_rounded,
+  };
 }
 
 class _TripPanel extends ConsumerWidget {

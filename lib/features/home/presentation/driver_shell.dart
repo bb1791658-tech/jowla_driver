@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:jowla_driver/core/theme/app_theme.dart';
 import 'package:jowla_driver/features/home/application/driver_home_controller.dart';
 import 'package:jowla_driver/features/earnings/presentation/earnings_screen.dart';
 import 'package:jowla_driver/features/home/presentation/home_screen.dart';
 import 'package:jowla_driver/features/notifications/presentation/notifications_screen.dart';
 import 'package:jowla_driver/features/profile/presentation/profile_screen.dart';
+import 'package:jowla_driver/features/rides/domain/models/ride.dart';
+import 'package:jowla_driver/features/trip/application/trip_controller.dart';
 
 class DriverShell extends ConsumerStatefulWidget {
   const DriverShell({super.key});
@@ -18,6 +21,7 @@ class DriverShell extends ConsumerStatefulWidget {
 
 class _DriverShellState extends ConsumerState<DriverShell> {
   var _index = 0;
+  String? _openedRideId;
 
   static const _screens = [
     HomeScreen(),
@@ -29,13 +33,28 @@ class _DriverShellState extends ConsumerState<DriverShell> {
   @override
   Widget build(BuildContext context) {
     final home = ref.watch(driverHomeControllerProvider);
+    final activeRide = ref.watch(tripControllerProvider).valueOrNull;
+    _openActiveRideOnce(activeRide);
+    ref.listen(tripControllerProvider, (previous, next) {
+      _openActiveRideOnce(next.valueOrNull);
+    });
+    final hasIncomingOffer = home.activeOffer != null;
     return Scaffold(
       body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: _DriverBottomBar(
-        selectedIndex: _index,
-        state: home,
-        onDestinationSelected: (value) => setState(() => _index = value),
-        onWorkPressed: () => _toggleWork(home),
+      bottomNavigationBar: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        child: hasIncomingOffer
+            ? const SizedBox.shrink(key: ValueKey('offers-hide-bottom-bar'))
+            : _DriverBottomBar(
+                key: const ValueKey('driver-bottom-bar'),
+                selectedIndex: _index,
+                state: home,
+                onDestinationSelected: (value) =>
+                    setState(() => _index = value),
+                onWorkPressed: () => _toggleWork(home),
+              ),
       ),
     );
   }
@@ -48,6 +67,15 @@ class _DriverShellState extends ConsumerState<DriverShell> {
       unawaited(controller.goOnline());
     }
   }
+
+  void _openActiveRideOnce(Ride? ride) {
+    if (ride == null || !ride.status.isActiveForDriver) return;
+    if (_openedRideId == ride.id) return;
+    _openedRideId = ride.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (context.mounted) context.push('/trip');
+    });
+  }
 }
 
 class _DriverBottomBar extends StatelessWidget {
@@ -56,6 +84,7 @@ class _DriverBottomBar extends StatelessWidget {
     required this.state,
     required this.onDestinationSelected,
     required this.onWorkPressed,
+    super.key,
   });
 
   final int selectedIndex;
@@ -193,8 +222,8 @@ class _WorkPowerButton extends StatelessWidget {
           children: [
             AnimatedContainer(
               duration: const Duration(milliseconds: 220),
-              width: 84,
-              height: 84,
+              width: 78,
+              height: 78,
               decoration: BoxDecoration(
                 color: color,
                 shape: BoxShape.circle,
@@ -218,7 +247,7 @@ class _WorkPowerButton extends StatelessWidget {
                     : const Icon(
                         Icons.power_settings_new_rounded,
                         color: Colors.white,
-                        size: 42,
+                        size: 38,
                       ),
               ),
             ),

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:jowla_driver/core/providers.dart';
 import 'package:jowla_driver/core/services/location_service.dart';
+import 'package:jowla_driver/core/storage/session_store.dart';
 import 'package:jowla_driver/features/auth/application/auth_controller.dart';
 import 'package:jowla_driver/features/auth/data/backend_auth_repository.dart';
 import 'package:jowla_driver/features/auth/domain/models/driver_session.dart';
@@ -19,14 +20,21 @@ import 'package:jowla_driver/features/trip/application/trip_controller.dart';
 import 'support/fakes.dart';
 
 class _FakeLocationService extends LocationService {
-  _FakeLocationService(this._positions);
+  _FakeLocationService(this._positions, this._currentPosition);
 
   final Stream<Position> _positions;
+  final Position _currentPosition;
   var permissionChecks = 0;
 
   @override
   Future<void> ensurePermission() async {
     permissionChecks++;
+  }
+
+  @override
+  Future<Position> getCurrentPosition() async {
+    permissionChecks++;
+    return _currentPosition;
   }
 
   @override
@@ -75,8 +83,11 @@ void main() {
         rideRepositoryProvider.overrideWithValue(rides),
         driverRepositoryProvider.overrideWithValue(drivers),
         authRepositoryProvider.overrideWithValue(auth),
+        sessionStoreProvider.overrideWithValue(
+          SessionStore(InMemorySecureStore()),
+        ),
         locationServiceProvider.overrideWithValue(
-          _FakeLocationService(positions.stream),
+          _FakeLocationService(positions.stream, _position(30.95, 46.95)),
         ),
       ],
     );
@@ -110,11 +121,14 @@ void main() {
       DriverAccountStatus.online,
     );
 
+    expect(realtime.sentLocations, hasLength(1));
+    expect(realtime.sentLocations.single['lat'], 30.95);
+
     positions.add(_position(30.96, 46.97));
     await settle();
-    expect(realtime.sentLocations, hasLength(1));
-    expect(realtime.sentLocations.single['lat'], 30.96);
-    expect(realtime.sentLocations.single['heading'], 90);
+    expect(realtime.sentLocations, hasLength(2));
+    expect(realtime.sentLocations.last['lat'], 30.96);
+    expect(realtime.sentLocations.last['heading'], 90);
   });
 
   test('Offline: لا يُرسل أي موقع بعد الفصل', () async {
@@ -123,7 +137,7 @@ void main() {
     await settle();
     positions.add(_position(30.96, 46.97));
     await settle();
-    expect(realtime.sentLocations, hasLength(1));
+    expect(realtime.sentLocations, hasLength(2));
 
     await controller.goOffline();
     await settle();
@@ -132,7 +146,7 @@ void main() {
 
     positions.add(_position(31, 47));
     await settle();
-    expect(realtime.sentLocations, hasLength(1));
+    expect(realtime.sentLocations, hasLength(2));
   });
 
   test('عرض وارد عبر Socket يُعرض ويُقبل عبر REST ويُسند الرحلة', () async {
@@ -237,6 +251,62 @@ void main() {
     expect(state.offerCount, 1);
     expect(state.activeOffer?.offerId, 'offer-2');
   });
+
+  test(
+    'العروض التي تصل في أوقات مختلفة تُضاف ولا تستبدل العرض الحالي',
+    () async {
+      final controller = await ready();
+      await controller.goOnline();
+      await settle();
+
+      realtime.offersController.add({
+        'rideId': 'ride-1',
+        'offerId': 'offer-1',
+        'expiresAt': DateTime.now()
+            .add(const Duration(seconds: 30))
+            .toIso8601String(),
+        'pickup': {'lat': 30.96, 'lng': 46.97},
+        'estimatedFare': 5000,
+        'currency': 'IQD',
+      });
+      realtime.offersController.add({
+        'rideId': 'ride-expired',
+        'offerId': 'offer-2',
+        'expiresAt': DateTime.now()
+            .add(const Duration(milliseconds: 40))
+            .toIso8601String(),
+        'pickup': {'lat': 30.961, 'lng': 46.971},
+        'estimatedFare': 5500,
+        'currency': 'IQD',
+      });
+      realtime.offersController.add({
+        'rideId': 'ride-3',
+        'offerId': 'offer-3',
+        'expiresAt': DateTime.now()
+            .add(const Duration(seconds: 30))
+            .toIso8601String(),
+        'pickup': {'lat': 30.97, 'lng': 46.98},
+        'estimatedFare': 7000,
+        'currency': 'IQD',
+      });
+      await settle();
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      var state = container.read(driverHomeControllerProvider);
+      expect(state.offerCount, 3);
+      expect(state.availableOfferCount, 3);
+      expect(state.activeOffer?.offerId, 'offer-1');
+      expect(state.nextAvailableOffer?.offerId, 'offer-2');
+
+      controller.showNextOffer();
+      state = container.read(driverHomeControllerProvider);
+      expect(state.activeOffer?.offerId, 'offer-2');
+
+      controller.showNextOffer();
+      state = container.read(driverHomeControllerProvider);
+      expect(state.activeOffer?.offerId, 'offer-3');
+    },
+  );
 
   test('انتهاء مهلة الـ30 ثانية محليًا يزيل العرض', () async {
     final controller = await ready();

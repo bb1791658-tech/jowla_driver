@@ -150,5 +150,6 @@ void main() {
       type: DioExceptionType.connectionTimeout,
     );
     expect(ApiClient.mapError(timeout).message, contains('تعذر الاتصال'));
+    expect(ApiClient.mapError(timeout).message, contains('العنوان المستخدم'));
   });
 }

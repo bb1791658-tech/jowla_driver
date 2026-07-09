@@ -29,16 +29,27 @@ RideStatus? rideStatusFromBackend(String? value) {
 }
 
 extension RideStatusLabel on RideStatus {
+  String get backendValue => switch (this) {
+    RideStatus.pending => 'PENDING',
+    RideStatus.searchingDriver => 'SEARCHING_DRIVER',
+    RideStatus.driverAccepted => 'DRIVER_ACCEPTED',
+    RideStatus.driverArrived => 'DRIVER_ARRIVED',
+    RideStatus.tripStarted => 'TRIP_STARTED',
+    RideStatus.completed => 'COMPLETED',
+    RideStatus.cancelled => 'CANCELLED',
+    RideStatus.noDriverFound => 'NO_DRIVER_FOUND',
+  };
+
   String get arabicLabel => switch (this) {
-        RideStatus.pending => 'بانتظار المعالجة',
-        RideStatus.searchingDriver => 'جاري البحث عن سائق',
-        RideStatus.driverAccepted => 'متجه إلى نقطة الانطلاق',
-        RideStatus.driverArrived => 'وصلت إلى نقطة الانطلاق',
-        RideStatus.tripStarted => 'الرحلة جارية',
-        RideStatus.completed => 'اكتملت الرحلة',
-        RideStatus.cancelled => 'أُلغيت الرحلة',
-        RideStatus.noDriverFound => 'لم يتم العثور على سائق',
-      };
+    RideStatus.pending => 'بانتظار المعالجة',
+    RideStatus.searchingDriver => 'جاري البحث عن سائق',
+    RideStatus.driverAccepted => 'متجه إلى نقطة الانطلاق',
+    RideStatus.driverArrived => 'وصلت إلى نقطة الانطلاق',
+    RideStatus.tripStarted => 'الرحلة جارية',
+    RideStatus.completed => 'اكتملت الرحلة',
+    RideStatus.cancelled => 'أُلغيت الرحلة',
+    RideStatus.noDriverFound => 'لم يتم العثور على سائق',
+  };
 
   bool get isFinished =>
       this == RideStatus.completed ||
@@ -63,16 +74,22 @@ class RiderInfo {
   const RiderInfo({required this.id, this.name, this.phone});
 
   factory RiderInfo.fromJson(Map<String, dynamic> json) => RiderInfo(
-        id: json['id']?.toString() ?? '',
-        name: _nonEmpty(json['name']),
-        phone: _nonEmpty(json['phone']),
-      );
+    id: json['id']?.toString() ?? '',
+    name: _nonEmpty(json['name']),
+    phone: _nonEmpty(json['phone']),
+  );
 
   final String id;
   final String? name;
   final String? phone;
 
   String get displayName => name ?? 'راكب جولة';
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    if (name != null) 'name': name,
+    if (phone != null) 'phone': phone,
+  };
 
   static String? _nonEmpty(Object? value) {
     final text = value?.toString().trim();
@@ -89,11 +106,11 @@ class RidePayment {
   });
 
   factory RidePayment.fromJson(Map<String, dynamic> json) => RidePayment(
-        amount: asDouble(json['amount']) ?? 0,
-        commissionAmount: asDouble(json['commissionAmount']) ?? 0,
-        method: json['method']?.toString(),
-        status: json['status']?.toString(),
-      );
+    amount: asDouble(json['amount']) ?? 0,
+    commissionAmount: asDouble(json['commissionAmount']) ?? 0,
+    method: json['method']?.toString(),
+    status: json['status']?.toString(),
+  );
 
   final double amount;
   final double commissionAmount;
@@ -101,6 +118,13 @@ class RidePayment {
   final String? status;
 
   double get netAmount => amount - commissionAmount;
+
+  Map<String, dynamic> toJson() => {
+    'amount': amount,
+    'commissionAmount': commissionAmount,
+    if (method != null) 'method': method,
+    if (status != null) 'status': status,
+  };
 }
 
 class Ride {
@@ -198,6 +222,26 @@ class Ride {
         requestedAt: requestedAt,
         completedAt: completedAt,
       );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'status': status.backendValue,
+    'pickupLat': pickup.latitude,
+    'pickupLng': pickup.longitude,
+    'dropoffLat': dropoff.latitude,
+    'dropoffLng': dropoff.longitude,
+    if (pickupAddress != null) 'pickupAddress': pickupAddress,
+    if (dropoffAddress != null) 'dropoffAddress': dropoffAddress,
+    if (estimatedFare != null) 'estimatedFare': estimatedFare,
+    if (finalFare != null) 'finalFare': finalFare,
+    if (distanceKm != null) 'distanceKm': distanceKm,
+    if (durationMinutes != null) 'durationMinutes': durationMinutes,
+    'currency': currency,
+    if (rider != null) 'user': rider!.toJson(),
+    if (payment != null) 'payment': payment!.toJson(),
+    if (requestedAt != null) 'requestedAt': requestedAt!.toIso8601String(),
+    if (completedAt != null) 'completedAt': completedAt!.toIso8601String(),
+  };
 
   static String? _nonEmpty(Object? value) {
     final text = value?.toString().trim();

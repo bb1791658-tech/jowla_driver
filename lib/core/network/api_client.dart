@@ -155,8 +155,8 @@ class ApiClient {
           error.type == DioExceptionType.connectionTimeout ||
           error.type == DioExceptionType.sendTimeout ||
           error.type == DioExceptionType.receiveTimeout) {
-        return const AppException(
-          'تعذر الاتصال بالخادم. تحقق من اتصالك بالإنترنت.',
+        return AppException(
+          'تعذر الاتصال بالخادم. ${AppConfig.backendConnectionHint}',
         );
       }
       if (error.response?.statusCode == 401) {

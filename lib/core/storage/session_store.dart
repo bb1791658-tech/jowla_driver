@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../features/auth/domain/models/driver_session.dart';
+import '../../features/rides/domain/models/ride.dart';
 
 /// واجهة تخزين مفاتيح آمنة قابلة للاستبدال في الاختبارات.
 abstract interface class SecureKeyValueStore {
@@ -35,6 +36,7 @@ class SessionStore {
   static const _refreshTokenKey = 'jowla_refresh_token';
   static const _driverProfileKey = 'jowla_driver_profile';
   static const _installationIdKey = 'jowla_installation_id';
+  static const _activeRideKey = 'jowla_active_ride';
 
   final SecureKeyValueStore _storage;
 
@@ -92,6 +94,27 @@ class SessionStore {
     ]);
   }
 
+  Future<Ride?> readActiveRide() async {
+    final rideJson = await _storage.read(_activeRideKey);
+    if (rideJson == null || rideJson.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(rideJson);
+      if (decoded is! Map<String, dynamic>) return null;
+      final ride = Ride.fromJson(decoded);
+      return ride.status.isActiveForDriver ? ride : null;
+    } catch (_) {
+      await clearActiveRide();
+      return null;
+    }
+  }
+
+  Future<void> saveActiveRide(Ride ride) {
+    if (!ride.status.isActiveForDriver) return clearActiveRide();
+    return _storage.write(_activeRideKey, jsonEncode(ride.toJson()));
+  }
+
+  Future<void> clearActiveRide() => _storage.delete(_activeRideKey);
+
   /// deviceKey المطلوب في POST /auth/otp/verify (بين 8 و200 محرفًا).
   /// يبقى ثابتًا حتى بعد تسجيل الخروج ليُعرّف هذا التثبيت لدى الخادم.
   Future<String> getOrCreateInstallationId() async {
@@ -107,6 +130,7 @@ class SessionStore {
       _storage.delete(_accessTokenKey),
       _storage.delete(_refreshTokenKey),
       _storage.delete(_driverProfileKey),
+      _storage.delete(_activeRideKey),
     ]);
   }
 

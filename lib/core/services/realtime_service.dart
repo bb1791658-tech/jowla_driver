@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../config/app_config.dart';
+import '../errors/app_exception.dart';
 import '../storage/session_store.dart';
 
 class RealtimeEvent {
@@ -85,7 +86,7 @@ class SocketRealtimeService implements RealtimeService {
     disconnect();
     final token = await _sessionStore.readAccessToken();
     if (token == null || token.isEmpty) {
-      throw StateError('لا توجد جلسة صالحة للاتصال بخدمة الرحلات.');
+      throw const AppException('لا توجد جلسة صالحة للاتصال بخدمة الرحلات.');
     }
 
     // socket-auth.service.ts يقرأ التوكن من handshake.auth.token
@@ -118,7 +119,10 @@ class SocketRealtimeService implements RealtimeService {
     socket.onConnectError((error) {
       if (!connection.isCompleted) {
         connection.completeError(
-          StateError('تعذر الاتصال بخدمة الرحلات: $error'),
+          AppException(
+            'تعذر الاتصال بخدمة الرحلات. '
+            '${AppConfig.backendConnectionHint} التفاصيل: $error',
+          ),
         );
       }
     });

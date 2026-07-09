@@ -26,8 +26,9 @@ class BackendHealthService {
         throw const AppException('استجابة الخادم غير صالحة.');
       }
     } catch (_) {
-      throw const AppException(
-        'تعذر الاتصال بخادم جولة. تأكد من تشغيل الخادم ثم أعد المحاولة.',
+      throw AppException(
+        'تعذر الاتصال بخادم جولة. تأكد من تشغيل الخادم ثم أعد المحاولة. '
+        '${AppConfig.backendConnectionHint}',
       );
     }
   }

@@ -31,16 +31,22 @@ class TripController extends AsyncNotifier<Ride?> {
       _eventsSubscription?.cancel();
       _reconnectSubscription?.cancel();
     });
-    return ref.read(rideRepositoryProvider).currentRide();
+    final cached = await ref.read(sessionStoreProvider).readActiveRide();
+    if (cached != null) {
+      unawaited(refresh());
+      return cached;
+    }
+    return _loadCurrentRide();
   }
 
   /// يستدعى بعد قبول عرض: رد accept هو الرحلة المسندة.
-  void rideAssigned(Ride ride) => state = AsyncData(ride);
+  void rideAssigned(Ride ride) {
+    state = AsyncData(ride);
+    unawaited(_persistRide(ride));
+  }
 
   Future<void> refresh() async {
-    final result = await AsyncValue.guard(
-      () => ref.read(rideRepositoryProvider).currentRide(),
-    );
+    final result = await AsyncValue.guard(_loadCurrentRide);
     if (result.hasError) return;
     final refreshed = result.value;
     final current = state.valueOrNull;
@@ -50,7 +56,9 @@ class TripController extends AsyncNotifier<Ride?> {
       return;
     }
     if (refreshed != null || current == null || !current.status.isFinished) {
-      state = AsyncData(refreshed?.copyWith(rider: current?.rider));
+      final next = refreshed?.copyWith(rider: current?.rider);
+      state = AsyncData(next);
+      await _persistRide(next);
     }
   }
 
@@ -66,6 +74,7 @@ class TripController extends AsyncNotifier<Ride?> {
 
   Future<void> clear() async {
     state = const AsyncData(null);
+    await ref.read(sessionStoreProvider).clearActiveRide();
   }
 
   Future<bool> _transition(
@@ -84,7 +93,9 @@ class TripController extends AsyncNotifier<Ride?> {
       ).copyWithPrevious(AsyncData(current));
       return false;
     }
-    state = AsyncData(result.requireValue.copyWith(rider: current.rider));
+    final next = result.requireValue.copyWith(rider: current.rider);
+    state = AsyncData(next);
+    await _persistRide(next);
     return true;
   }
 
@@ -96,13 +107,31 @@ class TripController extends AsyncNotifier<Ride?> {
     if (rideId.isNotEmpty && rideId != current.id) return;
     try {
       final ride = Ride.fromJson(payload);
-      state = AsyncData(ride.copyWith(rider: current.rider));
+      final next = ride.copyWith(rider: current.rider);
+      state = AsyncData(next);
+      unawaited(_persistRide(next));
     } on FormatException {
       // حمولة مختصرة مثل {rideId, status} — نطبق الحالة فقط.
       final status = rideStatusFromBackend(payload['status']?.toString());
       if (status != null) {
-        state = AsyncData(current.copyWith(status: status));
+        final next = current.copyWith(status: status);
+        state = AsyncData(next);
+        unawaited(_persistRide(next));
       }
     }
+  }
+
+  Future<Ride?> _loadCurrentRide() async {
+    final ride = await ref.read(rideRepositoryProvider).currentRide();
+    await _persistRide(ride);
+    return ride;
+  }
+
+  Future<void> _persistRide(Ride? ride) {
+    final store = ref.read(sessionStoreProvider);
+    if (ride == null || !ride.status.isActiveForDriver) {
+      return store.clearActiveRide();
+    }
+    return store.saveActiveRide(ride);
   }
 }

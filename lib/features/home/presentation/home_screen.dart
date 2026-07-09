@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,8 +9,10 @@ import 'package:latlong2/latlong.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/services/road_route_service.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../rides/domain/models/ride.dart';
 import '../../rides/domain/models/ride_offer.dart';
+import '../../rides/presentation/ride_formatters.dart';
 import '../../trip/application/trip_controller.dart';
 import '../../trip_requests/presentation/ride_request_sheet.dart';
 import '../application/driver_home_controller.dart';
@@ -25,7 +30,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final _mapController = MapController();
   String? _lastOfferFocusSignature;
   String? _lastTripFocusSignature;
-  static const _fallbackCenter = LatLng(30.9601, 46.9769); // الجبايش
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref
+            .read(driverHomeControllerProvider.notifier)
+            .requestCurrentLocation(),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,7 +64,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
 
     final activeOffer = home.activeOffer;
+    final nextOffer = home.availableOfferCount > 1
+        ? home.nextAvailableOffer
+        : null;
     final hasActiveTrip = trip != null && trip.status.isActiveForDriver;
+    final activeOfferPickup = activeOffer?.pickup;
+    final activeOfferDropoff = activeOffer?.ride?.dropoff;
+    final activeOfferRouteRequest =
+        activeOfferPickup != null && activeOfferDropoff != null
+        ? RoadRouteRequest.fromPoints(activeOfferPickup, activeOfferDropoff)
+        : null;
+    final activeOfferRoute = activeOfferRouteRequest == null
+        ? null
+        : ref.watch(roadRoutePathProvider(activeOfferRouteRequest)).valueOrNull;
+    final activeOfferFallbackRoute =
+        activeOfferPickup != null && activeOfferDropoff != null
+        ? <LatLng>[activeOfferPickup, activeOfferDropoff]
+        : const <LatLng>[];
+    final activeOfferRoutePoints =
+        activeOfferRoute != null && activeOfferRoute.length >= 2
+        ? activeOfferRoute
+        : activeOfferFallbackRoute;
     final headingToPickup =
         hasActiveTrip && trip.status == RideStatus.driverAccepted;
     final activeTripTarget = hasActiveTrip
@@ -71,6 +108,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         activeTripRoute != null && activeTripRoute.length >= 2
         ? activeTripRoute
         : activeTripFallbackRoute;
+    final mapInitialCenter =
+        driverPoint ??
+        activeOffer?.pickup ??
+        activeOffer?.ride?.dropoff ??
+        activeTripTarget;
     _scheduleOfferFocus(activeOffer, driverPoint);
     _scheduleActiveTripFocus(
       activeOffer == null && hasActiveTrip ? trip : null,
@@ -80,50 +122,66 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: driverPoint ?? _fallbackCenter,
-              initialZoom: 14,
-              minZoom: 5,
-              maxZoom: 18,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: AppConfig.mapTileUrlTemplate,
-                userAgentPackageName: 'com.jowla.driver',
+          if (mapInitialCenter == null)
+            const _LocationPendingBackground()
+          else
+            FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: mapInitialCenter,
+                initialZoom: 14,
+                minZoom: 5,
+                maxZoom: 18,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                ),
               ),
-              if (activeOffer == null &&
-                  hasActiveTrip &&
-                  activeTripRoutePoints.length >= 2)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: activeTripRoutePoints,
-                      strokeWidth: 5,
-                      color: const Color(0xFF1D6BFF),
-                    ),
-                  ],
+              children: [
+                TileLayer(
+                  urlTemplate: AppConfig.mapTileUrlTemplate,
+                  userAgentPackageName: 'com.jowla.driver',
                 ),
-              if (driverPoint != null && activeOffer == null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: driverPoint,
-                      width: 48,
-                      height: 72,
-                      child: DriverMapCarMarker(headingDegrees: heading),
-                    ),
-                  ],
-                ),
-              if (activeOffer != null)
-                _OfferMapLayer(
-                  offer: activeOffer,
-                  driverLocation: driverPoint,
-                  headingDegrees: heading,
-                ),
-            ],
-          ),
+                if (activeOffer == null &&
+                    hasActiveTrip &&
+                    activeTripRoutePoints.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: activeTripRoutePoints,
+                        strokeWidth: 5,
+                        color: const Color(0xFF1D6BFF),
+                      ),
+                    ],
+                  ),
+                if (activeOffer != null && activeOfferRoutePoints.length >= 2)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: activeOfferRoutePoints,
+                        strokeWidth: 5,
+                        color: AppTheme.primaryGreen,
+                      ),
+                    ],
+                  ),
+                if (driverPoint != null && activeOffer == null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: driverPoint,
+                        width: 48,
+                        height: 72,
+                        child: DriverMapCarMarker(headingDegrees: heading),
+                      ),
+                    ],
+                  ),
+                if (activeOffer != null)
+                  _OfferMapLayer(
+                    offer: activeOffer,
+                    driverLocation: driverPoint,
+                    headingDegrees: heading,
+                  ),
+              ],
+            ),
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -170,31 +228,54 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           if (activeOffer != null)
             Align(
               alignment: Alignment.bottomCenter,
-              child: RideRequestSheet(
-                key: ValueKey(activeOffer.offerId),
-                offer: activeOffer,
-                driverLocation: driverPoint,
-                offerPosition: home.offerPosition,
-                offerCount: home.offerCount,
-                isResponding: home.isRespondingToOffer,
-                onPreviousOffer: () => ref
-                    .read(driverHomeControllerProvider.notifier)
-                    .showPreviousOffer(),
-                onNextOffer: () => ref
-                    .read(driverHomeControllerProvider.notifier)
-                    .showNextOffer(),
-                onAccept: () async {
-                  final accepted = await ref
-                      .read(driverHomeControllerProvider.notifier)
-                      .acceptOffer();
-                  if (accepted && context.mounted) context.push('/trip');
-                },
-                onReject: () => ref
-                    .read(driverHomeControllerProvider.notifier)
-                    .rejectOffer(),
-                onTimeout: () => ref
-                    .read(driverHomeControllerProvider.notifier)
-                    .offerTimedOut(activeOffer.offerId),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (nextOffer != null) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16, bottom: 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _OtherOfferPriceButton(
+                          offer: nextOffer,
+                          isDisabled: home.isRespondingToOffer,
+                          onPressed: () => ref
+                              .read(driverHomeControllerProvider.notifier)
+                              .showNextOffer(),
+                        ),
+                      ),
+                    ),
+                  ],
+                  RideRequestSheet(
+                    key: ValueKey(activeOffer.offerId),
+                    offer: activeOffer,
+                    driverLocation: driverPoint,
+                    offerVisibleUntil:
+                        home.offerVisibleUntil[activeOffer.offerId],
+                    offerPosition: home.offerPosition,
+                    offerCount: home.offerCount,
+                    isResponding: home.isRespondingToOffer,
+                    onPreviousOffer: () => ref
+                        .read(driverHomeControllerProvider.notifier)
+                        .showPreviousOffer(),
+                    onNextOffer: () => ref
+                        .read(driverHomeControllerProvider.notifier)
+                        .showNextOffer(),
+                    onAccept: () async {
+                      final accepted = await ref
+                          .read(driverHomeControllerProvider.notifier)
+                          .acceptOffer();
+                      if (accepted && context.mounted) context.push('/trip');
+                    },
+                    onReject: () => ref
+                        .read(driverHomeControllerProvider.notifier)
+                        .rejectOffer(),
+                    onTimeout: () => ref
+                        .read(driverHomeControllerProvider.notifier)
+                        .offerTimedOut(activeOffer.offerId),
+                  ),
+                ],
               ),
             ),
         ],
@@ -304,6 +385,111 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 }
 
+class _OtherOfferPriceButton extends StatelessWidget {
+  const _OtherOfferPriceButton({
+    required this.offer,
+    required this.isDisabled,
+    required this.onPressed,
+  });
+
+  final RideOffer offer;
+  final bool isDisabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final fare = formatIqd(offer.estimatedFare ?? offer.ride?.estimatedFare);
+    return Material(
+      color: Colors.white,
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(999),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('other-offer-price-button'),
+        onTap: isDisabled ? null : onPressed,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsetsDirectional.only(start: 14, end: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: const Color(0xFFE0ECE4)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            textDirection: ui.TextDirection.rtl,
+            children: [
+              Text(
+                '$fare د.ع',
+                textDirection: ui.TextDirection.rtl,
+                style: TextStyle(
+                  color: isDisabled
+                      ? AppTheme.primaryGreen.withValues(alpha: 0.42)
+                      : AppTheme.primaryGreen,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.chevron_left_rounded,
+                size: 22,
+                color: isDisabled
+                    ? AppTheme.primaryGreen.withValues(alpha: 0.42)
+                    : AppTheme.primaryGreen,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LocationPendingBackground extends StatelessWidget {
+  const _LocationPendingBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: colorScheme.surface,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.my_location_rounded,
+                size: 52,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'بانتظار موقعك الحقيقي',
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'فعّل خدمة الموقع واسمح للتطبيق بالوصول إليها.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _OfferMapLayer extends StatelessWidget {
   const _OfferMapLayer({
     required this.offer,
@@ -331,10 +517,10 @@ class _OfferMapLayer extends StatelessWidget {
           Marker(
             point: driverLocation!,
             width: showCarBelowPickup ? 56 : 48,
-            height: showCarBelowPickup ? 86 : 72,
+            height: showCarBelowPickup ? 102 : 72,
             child: showCarBelowPickup
                 ? Transform.translate(
-                    offset: const Offset(0, 30),
+                    offset: const Offset(0, 44),
                     child: DriverMapCarMarker(
                       headingDegrees: headingDegrees,
                       width: 28,
@@ -345,16 +531,23 @@ class _OfferMapLayer extends StatelessWidget {
           ),
         if (pickup != null)
           Marker(
+            alignment: Alignment.bottomCenter,
+            rotate: true,
             point: pickup,
-            width: 132,
-            height: 48,
-            child: PickupMapMarker(distanceKm: pickupDistanceKm),
+            width: PickupMapMarker.markerWidth,
+            height: PickupMapMarker.markerHeight(showCarBelowPickup ? 8 : 0),
+            child: PickupMapMarker(
+              distanceKm: pickupDistanceKm,
+              liftPixels: showCarBelowPickup ? 8 : 0,
+            ),
           ),
         if (dropoff != null)
           Marker(
+            alignment: Alignment.bottomCenter,
+            rotate: true,
             point: dropoff,
-            width: 58,
-            height: 72,
+            width: DropoffMapMarker.markerWidth,
+            height: DropoffMapMarker.markerHeight,
             child: const DropoffMapMarker(),
           ),
       ],
@@ -368,7 +561,7 @@ class _BalanceSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 64,
+      height: 68,
       width: double.infinity,
       child: Stack(
         alignment: Alignment.center,
@@ -380,7 +573,7 @@ class _BalanceSummaryCard extends StatelessWidget {
             shadowColor: Colors.black.withValues(alpha: 0.12),
             child: Container(
               width: 220,
-              height: 64,
+              height: 68,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
               child: const Column(
                 mainAxisAlignment: MainAxisAlignment.center,

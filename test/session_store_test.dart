@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jowla_driver/core/storage/session_store.dart';
 import 'package:jowla_driver/features/auth/domain/models/driver_session.dart';
+import 'package:jowla_driver/features/rides/domain/models/ride.dart';
 
 import 'support/fakes.dart';
 
@@ -36,13 +37,30 @@ void main() {
     expect(await store.readSession(), isNull);
   });
 
-  test('deviceKey ثابت ولا يُمسح مع الجلسة (شرط uq userId+deviceKey)',
-      () async {
+  test(
+    'deviceKey ثابت ولا يُمسح مع الجلسة (شرط uq userId+deviceKey)',
+    () async {
+      final store = SessionStore(InMemorySecureStore());
+      final first = await store.getOrCreateInstallationId();
+      expect(first.length, greaterThanOrEqualTo(8));
+      await store.clearSession();
+      final second = await store.getOrCreateInstallationId();
+      expect(second, first);
+    },
+  );
+
+  test('يحفظ الرحلة النشطة فقط ويمسحها مع الجلسة', () async {
     final store = SessionStore(InMemorySecureStore());
-    final first = await store.getOrCreateInstallationId();
-    expect(first.length, greaterThanOrEqualTo(8));
+    final ride = sampleRide(status: RideStatus.tripStarted);
+
+    await store.saveActiveRide(ride);
+    expect((await store.readActiveRide())?.id, ride.id);
+
+    await store.saveActiveRide(ride.copyWith(status: RideStatus.completed));
+    expect(await store.readActiveRide(), isNull);
+
+    await store.saveActiveRide(ride);
     await store.clearSession();
-    final second = await store.getOrCreateInstallationId();
-    expect(second, first);
+    expect(await store.readActiveRide(), isNull);
   });
 }

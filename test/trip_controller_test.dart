@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jowla_driver/core/providers.dart';
 import 'package:jowla_driver/core/services/realtime_service.dart';
+import 'package:jowla_driver/core/storage/session_store.dart';
 import 'package:jowla_driver/features/rides/data/backend_ride_repository.dart';
 import 'package:jowla_driver/features/rides/domain/models/ride.dart';
 import 'package:jowla_driver/features/trip/application/trip_controller.dart';
@@ -11,15 +12,18 @@ import 'support/fakes.dart';
 void main() {
   late FakeRealtimeService realtime;
   late FakeRideRepository rides;
+  late SessionStore store;
   late ProviderContainer container;
 
   setUp(() {
     realtime = FakeRealtimeService();
     rides = FakeRideRepository();
+    store = SessionStore(InMemorySecureStore());
     container = ProviderContainer(
       overrides: [
         realtimeServiceProvider.overrideWithValue(realtime),
         rideRepositoryProvider.overrideWithValue(rides),
+        sessionStoreProvider.overrideWithValue(store),
       ],
     );
     addTearDown(container.dispose);
@@ -31,6 +35,21 @@ void main() {
     final ride = await container.read(tripControllerProvider.future);
     expect(ride?.status, RideStatus.tripStarted);
     expect(ride?.rider?.name, 'راكب');
+    expect((await store.readActiveRide())?.id, 'ride-1');
+  });
+
+  test('يستعيد الرحلة النشطة من التخزين المحلي ثم يزامن الخادم', () async {
+    await store.saveActiveRide(sampleRide(status: RideStatus.tripStarted));
+    rides.current = sampleRide(status: RideStatus.driverArrived);
+
+    final ride = await container.read(tripControllerProvider.future);
+    expect(ride?.status, RideStatus.tripStarted);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      container.read(tripControllerProvider).value?.status,
+      RideStatus.driverArrived,
+    );
   });
 
   test('التسلسل الكامل: وصول → بدء → إنهاء مع العمولة والصافي', () async {

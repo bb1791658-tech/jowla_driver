@@ -37,6 +37,10 @@ abstract final class AppConfig {
 
   static String get realtimeUrl => '$backendOrigin/realtime';
   static String get healthUrl => '$backendOrigin/api/health';
+  static String get backendConnectionHint =>
+      'العنوان المستخدم: $backendOrigin. إذا كان التطبيق على هاتف حقيقي '
+      'فتأكد أن الهاتف والحاسوب على نفس الشبكة واستخدم عنوان الحاسوب داخل '
+      'الشبكة المحلية.';
 
   static const mapTileUrlTemplate =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -45,19 +49,6 @@ abstract final class AppConfig {
     'ROAD_ROUTE_BASE_URL',
     defaultValue: 'https://router.project-osrm.org',
   );
-
-  /// موقع تطوير ثابت داخل الجبايش لتجاوز قيود GPS في المحاكي فقط عند تفعيله
-  /// صراحة عبر dart-define. يبقى معطلاً افتراضياً.
-  static const enableDevFixedLocation = bool.fromEnvironment(
-    'ENABLE_DEV_FIXED_LOCATION',
-    defaultValue: false,
-  );
-  static final devFixedLatitude =
-      double.tryParse(const String.fromEnvironment('DEV_FIXED_LATITUDE')) ??
-      30.965209;
-  static final devFixedLongitude =
-      double.tryParse(const String.fromEnvironment('DEV_FIXED_LONGITUDE')) ??
-      46.9938377;
 
   /// Backend يشترط أن يكون آخر موقع للسائق أحدث من
   /// driver_location_freshness_seconds (القيمة الافتراضية 120 ثانية في

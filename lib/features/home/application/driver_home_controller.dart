@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/errors/app_exception.dart';
 import '../../../core/providers.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/models/driver_session.dart';
@@ -12,70 +13,9 @@ import '../../rides/data/backend_ride_repository.dart';
 import '../../rides/domain/models/ride.dart';
 import '../../rides/domain/models/ride_offer.dart';
 import '../../trip/application/trip_controller.dart';
+import 'driver_home_state.dart';
 
-enum HomeConnection { offline, connecting, online }
-
-class DriverHomeState {
-  const DriverHomeState({
-    this.connection = HomeConnection.offline,
-    this.accountStatus,
-    this.pendingOffers = const [],
-    this.currentOfferIndex = 0,
-    this.offerError,
-    this.error,
-    this.lastPosition,
-    this.lastLocationSentAt,
-    this.isRespondingToOffer = false,
-  });
-
-  final HomeConnection connection;
-  final DriverAccountStatus? accountStatus;
-  final List<RideOffer> pendingOffers;
-  final int currentOfferIndex;
-  final String? offerError;
-  final String? error;
-  final Position? lastPosition;
-  final DateTime? lastLocationSentAt;
-  final bool isRespondingToOffer;
-
-  bool get isOnline => connection == HomeConnection.online;
-  int get offerCount => pendingOffers.length;
-  int get offerPosition => offerCount == 0 ? 0 : currentOfferIndex + 1;
-  RideOffer? get activeOffer =>
-      pendingOffers.isEmpty ? null : pendingOffers[currentOfferIndex];
-
-  DriverHomeState copyWith({
-    HomeConnection? connection,
-    DriverAccountStatus? accountStatus,
-    List<RideOffer>? pendingOffers,
-    int? currentOfferIndex,
-    String? offerError,
-    String? error,
-    Position? lastPosition,
-    DateTime? lastLocationSentAt,
-    bool? isRespondingToOffer,
-    bool clearActiveOffer = false,
-    bool clearError = false,
-    bool clearOfferError = false,
-  }) {
-    final nextOffers = clearActiveOffer
-        ? const <RideOffer>[]
-        : pendingOffers ?? this.pendingOffers;
-    final maxIndex = nextOffers.isEmpty ? 0 : nextOffers.length - 1;
-    final requestedIndex = currentOfferIndex ?? this.currentOfferIndex;
-    return DriverHomeState(
-      connection: connection ?? this.connection,
-      accountStatus: accountStatus ?? this.accountStatus,
-      pendingOffers: nextOffers,
-      currentOfferIndex: requestedIndex.clamp(0, maxIndex).toInt(),
-      offerError: clearOfferError ? null : offerError ?? this.offerError,
-      error: clearError ? null : error ?? this.error,
-      lastPosition: lastPosition ?? this.lastPosition,
-      lastLocationSentAt: lastLocationSentAt ?? this.lastLocationSentAt,
-      isRespondingToOffer: isRespondingToOffer ?? this.isRespondingToOffer,
-    );
-  }
-}
+export 'driver_home_state.dart';
 
 final driverHomeControllerProvider =
     NotifierProvider<DriverHomeController, DriverHomeState>(
@@ -195,11 +135,27 @@ class DriverHomeController extends Notifier<DriverHomeState> {
     }
   }
 
+  Future<void> requestCurrentLocation() async {
+    if (state.lastPosition != null) return;
+    try {
+      final position = await ref
+          .read(locationServiceProvider)
+          .getCurrentPosition();
+      state = state.copyWith(lastPosition: position, clearError: true);
+    } catch (error) {
+      state = state.copyWith(error: error.toString());
+    }
+  }
+
   Future<void> _startOnlinePipeline({required bool markAvailability}) async {
     final driverId = _driverId;
     if (driverId == null) {
-      throw StateError('لا توجد جلسة سائق نشطة');
+      throw const AppException('لا توجد جلسة سائق نشطة.');
     }
+    final initialPosition = await ref
+        .read(locationServiceProvider)
+        .getCurrentPosition();
+    state = state.copyWith(lastPosition: initialPosition);
     if (markAvailability) {
       final account = await ref
           .read(driverRepositoryProvider)
@@ -207,14 +163,14 @@ class DriverHomeController extends Notifier<DriverHomeState> {
       state = state.copyWith(accountStatus: account.profile.status);
     }
     await ref.read(realtimeServiceProvider).connect();
-    _startLocationPublisher();
+    _startLocationPublisher(initialPosition);
     state = state.copyWith(connection: HomeConnection.online);
     await _refreshPendingOffers();
   }
 
   // ---------------------------------------------------------------- الموقع
 
-  void _startLocationPublisher() {
+  void _startLocationPublisher(Position initialPosition) {
     _stopLocationPublisher();
     _positionsSubscription = ref
         .read(locationServiceProvider)
@@ -230,6 +186,8 @@ class DriverHomeController extends Notifier<DriverHomeState> {
             );
           },
         );
+    state = state.copyWith(lastPosition: initialPosition);
+    _publishLocation(initialPosition);
     _heartbeat = Timer.periodic(AppConfig.locationHeartbeat, (_) {
       final position = state.lastPosition;
       final lastSent = state.lastLocationSentAt;

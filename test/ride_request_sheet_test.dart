@@ -37,7 +37,7 @@ void main() {
       ),
     );
     expect(find.text('قبول الرحلة'), findsOneWidget);
-    expect(find.text('دينار'), findsOneWidget);
+    expect(find.textContaining('د.ع'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 4));
     expect(timedOut, isFalse);
@@ -59,6 +59,8 @@ void main() {
         ),
       ),
     );
+    expect(find.text('قبول الرحلة'), findsOneWidget);
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('ride-offer-accept')));
     expect(accepted, isTrue);
     await tester.tap(find.byKey(const ValueKey('ride-offer-reject')));
@@ -87,7 +89,9 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('السعر يظهر يمين البطاقة بأرقام عربية', (tester) async {
+  testWidgets('السعر وتفاصيل الرحلة تظهر في بطاقة بيضاء بأرقام عربية', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(430, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -103,23 +107,20 @@ void main() {
       ),
     );
 
-    final priceRight = tester
-        .getTopRight(find.byKey(const ValueKey('ride-offer-price')))
-        .dx;
-    final pickupRight = tester.getTopRight(find.text('الانطلاق')).dx;
-
     final priceText = tester.widget<Text>(
       find.byKey(const ValueKey('ride-offer-price')),
     );
     expect(priceText.data, contains('٥'));
     expect(priceText.data, contains('٠'));
     expect(priceText.data, isNot(contains('5')));
-    expect(priceRight, greaterThan(360));
-    expect(pickupRight, greaterThan(340));
+    expect(find.text('نقطة الانطلاق'), findsOneWidget);
+    expect(find.text('الوجهة'), findsOneWidget);
+    expect(find.text('الوقت المتوقع'), findsOneWidget);
+    expect(find.text('المسافة'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('عند وجود عدة عروض يظهر زر التنقل ويستدعي السابق والتالي', (
+  testWidgets('عند وجود عدة عروض لا يأخذ زر التنقل مساحة داخل البطاقة', (
     tester,
   ) async {
     var previous = 0;
@@ -140,16 +141,10 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const ValueKey('ride-offer-switcher')), findsOneWidget);
-    final label = tester.widget<Text>(
-      find.byKey(const ValueKey('ride-offer-switcher-label')),
-    );
-    expect(label.data, contains('/'));
-
-    await tester.tap(find.byKey(const ValueKey('ride-offer-previous')));
-    await tester.tap(find.byKey(const ValueKey('ride-offer-next')));
-    expect(previous, 1);
-    expect(next, 1);
+    expect(find.byKey(const ValueKey('ride-offer-switcher')), findsNothing);
+    expect(find.text('قبول الرحلة'), findsOneWidget);
+    expect(previous, 0);
+    expect(next, 0);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }

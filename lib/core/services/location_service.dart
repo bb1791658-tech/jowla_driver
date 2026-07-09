@@ -9,8 +9,6 @@ class LocationService {
   const LocationService();
 
   Future<void> ensurePermission() async {
-    if (AppConfig.enableDevFixedLocation) return;
-
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const LocationException('فعّل خدمة الموقع (GPS) للمتابعة.');
     }
@@ -29,8 +27,6 @@ class LocationService {
   }
 
   Future<Position> getCurrentPosition() async {
-    if (AppConfig.enableDevFixedLocation) return _devFixedPosition();
-
     await ensurePermission();
     try {
       return await Geolocator.getCurrentPosition(
@@ -47,10 +43,6 @@ class LocationService {
   }
 
   Stream<Position> positions() {
-    if (AppConfig.enableDevFixedLocation) {
-      return _devFixedPositions();
-    }
-
     return Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
@@ -60,30 +52,6 @@ class LocationService {
   }
 
   Stream<ServiceStatus> serviceStatus() {
-    if (AppConfig.enableDevFixedLocation) {
-      return const Stream<ServiceStatus>.empty();
-    }
-
     return Geolocator.getServiceStatusStream();
   }
-
-  Stream<Position> _devFixedPositions() async* {
-    yield _devFixedPosition();
-    await for (final _ in Stream<void>.periodic(AppConfig.locationHeartbeat)) {
-      yield _devFixedPosition();
-    }
-  }
-
-  Position _devFixedPosition() => Position(
-    latitude: AppConfig.devFixedLatitude,
-    longitude: AppConfig.devFixedLongitude,
-    timestamp: DateTime.now().toUtc(),
-    altitude: 0,
-    altitudeAccuracy: 0,
-    accuracy: 5,
-    heading: 0,
-    headingAccuracy: 0,
-    speed: 0,
-    speedAccuracy: 0,
-  );
 }
