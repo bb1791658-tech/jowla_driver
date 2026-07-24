@@ -1,19 +1,22 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
-import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/config/app_config.dart';
+import '../../../core/maps/jowla_vector_map.dart';
 import '../../../core/services/road_route_service.dart';
+import '../../../core/services/smart_route_controller.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../home/application/driver_home_controller.dart';
 import '../../home/presentation/widgets/driver_map_car_marker.dart';
 import '../../home/presentation/widgets/trip_map_markers.dart';
 import '../../rides/domain/models/ride.dart';
 import '../../rides/presentation/ride_formatters.dart';
+import '../../communications/presentation/call_method_sheet.dart';
 import '../application/trip_navigation_options.dart';
 import '../application/trip_controller.dart';
 
@@ -23,7 +26,7 @@ class TripScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tripState = ref.watch(tripControllerProvider);
-    final ride = tripState.valueOrNull;
+    final ride = tripState.value;
 
     ref.listen(tripControllerProvider, (_, next) {
       if (next.hasError) {
@@ -67,30 +70,66 @@ class TripScreen extends ConsumerWidget {
   }
 }
 
-class _ActiveTripScreen extends ConsumerWidget {
+class _ActiveTripScreen extends ConsumerStatefulWidget {
   const _ActiveTripScreen({required this.ride, required this.isBusy});
 
   final Ride ride;
   final bool isBusy;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final position = ref.watch(
-      driverHomeControllerProvider.select((state) => state.lastPosition),
-    );
-    final driverPoint = position == null
-        ? null
-        : LatLng(position.latitude, position.longitude);
+  ConsumerState<_ActiveTripScreen> createState() => _ActiveTripScreenState();
+}
+
+class _ActiveTripScreenState extends ConsumerState<_ActiveTripScreen> {
+  late final SmartRouteController _smartRoute;
+
+  @override
+  void initState() {
+    super.initState();
+    _smartRoute = SmartRouteController(ref.read(roadRouteServiceProvider))
+      ..addListener(_onRouteChanged);
+  }
+
+  @override
+  void dispose() {
+    _smartRoute
+      ..removeListener(_onRouteChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onRouteChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ride = widget.ride;
+    final isBusy = widget.isBusy;
+    final home = ref.watch(driverHomeControllerProvider);
+    final position = home.lastPosition;
+    final driverPoint = home.mapPoint;
     final headingToPickup = ride.status == RideStatus.driverAccepted;
     final target = headingToPickup ? ride.pickup : ride.dropoff;
     final routeStart = headingToPickup
         ? driverPoint ?? ride.pickup
         : ride.pickup;
-    final routeRequest = RoadRouteRequest.fromPoints(routeStart, target);
-    final roadRoute = ref.watch(roadRoutePathProvider(routeRequest));
-    final routePoints = roadRoute.valueOrNull
-        ?.where((point) => point.latitude.isFinite && point.longitude.isFinite)
-        .toList();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        _smartRoute.update(
+          current: routeStart,
+          target: target,
+          accuracyMeters: position?.accuracy ?? 0,
+        ),
+      );
+    });
+    final routePoints =
+        (_smartRoute.target == target ? _smartRoute.route?.points : null)
+            ?.where(
+              (point) => point.latitude.isFinite && point.longitude.isFinite,
+            )
+            .toList();
     final fallbackRoute = routeStart == target
         ? <LatLng>[routeStart]
         : <LatLng>[routeStart, target];
@@ -107,6 +146,12 @@ class _ActiveTripScreen extends ConsumerWidget {
         headingToPickup &&
         distanceToTargetKm != null &&
         distanceToTargetKm < 0.08;
+    final smartEta = _smartRoute.target == target
+        ? _smartRoute.eta(
+            currentSpeedMetersPerSecond: position?.speed,
+            localDeparture: DateTime.now(),
+          )
+        : null;
 
     return PopScope(
       canPop: false,
@@ -117,80 +162,64 @@ class _ActiveTripScreen extends ConsumerWidget {
         body: Stack(
           children: [
             Positioned.fill(
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCenter: driverPoint ?? ride.pickup,
-                  initialZoom: 14,
-                  minZoom: 5,
-                  maxZoom: 18,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              child: JowlaVectorMap(
+                initialCenter: driverPoint ?? ride.pickup,
+                initialZoom: 14,
+                polylines: [
+                  JowlaMapPolyline(
+                    points: displayedRoute,
+                    color: const Color(0xFF1D6BFF),
                   ),
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate: AppConfig.mapTileUrlTemplate,
-                    userAgentPackageName: 'com.jowla.driver',
-                  ),
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: displayedRoute,
-                        strokeWidth: 5,
-                        color: const Color(0xFF1D6BFF),
+                ],
+                markers: [
+                  if (driverPoint != null && !showCarBelowPickup)
+                    JowlaMapMarker(
+                      point: driverPoint,
+                      size: const Size(40, 58),
+                      smoothMovement: true,
+                      child: DriverMapCarMarker(
+                        headingDegrees: home.mapHeading,
+                        width: 30,
+                        height: 46,
                       ),
-                    ],
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      if (driverPoint != null && !showCarBelowPickup)
-                        Marker(
-                          point: driverPoint,
-                          width: 40,
-                          height: 58,
-                          child: DriverMapCarMarker(
-                            headingDegrees: position?.heading,
-                            width: 30,
-                            height: 46,
-                          ),
+                    ),
+                  if (driverPoint != null && showCarBelowPickup)
+                    JowlaMapMarker(
+                      point: driverPoint,
+                      size: const Size(56, 102),
+                      smoothMovement: true,
+                      child: Transform.translate(
+                        offset: const Offset(0, 44),
+                        child: DriverMapCarMarker(
+                          headingDegrees: home.mapHeading,
+                          width: 28,
+                          height: 42,
                         ),
-                      if (driverPoint != null && showCarBelowPickup)
-                        Marker(
-                          point: driverPoint,
-                          width: 56,
-                          height: 102,
-                          child: Transform.translate(
-                            offset: const Offset(0, 44),
-                            child: DriverMapCarMarker(
-                              headingDegrees: position?.heading,
-                              width: 28,
-                              height: 42,
-                            ),
-                          ),
-                        ),
-                      if (headingToPickup)
-                        Marker(
-                          alignment: Alignment.bottomCenter,
-                          rotate: true,
-                          point: ride.pickup,
-                          width: PickupMapMarker.markerWidth,
-                          height: PickupMapMarker.markerHeight(
-                            showCarBelowPickup ? 8 : 0,
-                          ),
-                          child: PickupMapMarker(
-                            distanceKm: pickupDistanceKm,
-                            liftPixels: showCarBelowPickup ? 8 : 0,
-                          ),
-                        ),
-                      Marker(
-                        alignment: Alignment.bottomCenter,
-                        rotate: true,
-                        point: ride.dropoff,
-                        width: DropoffMapMarker.markerWidth,
-                        height: DropoffMapMarker.markerHeight,
-                        child: const DropoffMapMarker(),
                       ),
-                    ],
+                    ),
+                  if (headingToPickup)
+                    JowlaMapMarker(
+                      alignment: Alignment.bottomCenter,
+                      point: ride.pickup,
+                      size: Size(
+                        PickupMapMarker.markerWidth,
+                        PickupMapMarker.markerHeight(
+                          showCarBelowPickup ? 8 : 0,
+                        ),
+                      ),
+                      child: PickupMapMarker(
+                        distanceKm: pickupDistanceKm,
+                        liftPixels: showCarBelowPickup ? 8 : 0,
+                      ),
+                    ),
+                  JowlaMapMarker(
+                    alignment: Alignment.bottomCenter,
+                    point: ride.dropoff,
+                    size: const Size(
+                      DropoffMapMarker.markerWidth,
+                      DropoffMapMarker.markerHeight,
+                    ),
+                    child: const DropoffMapMarker(),
                   ),
                 ],
               ),
@@ -201,6 +230,7 @@ class _ActiveTripScreen extends ConsumerWidget {
                 ride: ride,
                 isBusy: isBusy,
                 distanceToTargetKm: distanceToTargetKm,
+                smartEta: smartEta,
                 headingToPickup: headingToPickup,
                 navigationTarget: target,
               ),
@@ -210,7 +240,7 @@ class _ActiveTripScreen extends ConsumerWidget {
               left: 12,
               child: SafeArea(
                 child: Material(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.surface,
                   elevation: 8,
                   shape: const CircleBorder(),
                   child: IconButton(
@@ -333,6 +363,7 @@ class _TripPanel extends ConsumerWidget {
     required this.ride,
     required this.isBusy,
     required this.distanceToTargetKm,
+    required this.smartEta,
     required this.headingToPickup,
     required this.navigationTarget,
   });
@@ -340,17 +371,18 @@ class _TripPanel extends ConsumerWidget {
   final Ride ride;
   final bool isBusy;
   final double? distanceToTargetKm;
+  final SmartEta? smartEta;
   final bool headingToPickup;
   final LatLng navigationTarget;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final rider = ride.rider;
-    final riderPhone = rider?.phone;
     final showPrimaryAction =
         ride.status == RideStatus.driverAccepted ||
         ride.status == RideStatus.driverArrived ||
-        ride.status == RideStatus.tripStarted;
+        ride.status == RideStatus.tripStarted ||
+        ride.status == RideStatus.tripPaused;
     return SizedBox(
       width: double.infinity,
       child: Stack(
@@ -359,7 +391,7 @@ class _TripPanel extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.only(top: 48),
             child: Material(
-              color: Colors.white,
+              color: Theme.of(context).colorScheme.surface,
               elevation: 16,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(26),
@@ -398,19 +430,15 @@ class _TripPanel extends ConsumerWidget {
                             ),
                           ),
                           IconButton.filledTonal(
-                            tooltip: riderPhone == null
-                                ? 'رقم الراكب غير متوفر'
-                                : 'اتصال بالراكب',
-                            onPressed: riderPhone == null
-                                ? null
-                                : () => launchUrl(
-                                    Uri(scheme: 'tel', path: riderPhone),
-                                  ),
+                            tooltip: 'الاتصال بالراكب',
+                            onPressed: () =>
+                                unawaited(_callRider(context, ride)),
                             icon: const Icon(Icons.call_rounded),
                           ),
                           IconButton.filledTonal(
-                            tooltip: 'المحادثة غير متوفرة في الخادم حاليًا',
-                            onPressed: null,
+                            tooltip: 'محادثة الراكب',
+                            onPressed: () =>
+                                context.push('/rides/${ride.id}/chat'),
                             icon: const Icon(Icons.chat_bubble_outline_rounded),
                           ),
                         ],
@@ -433,7 +461,13 @@ class _TripPanel extends ConsumerWidget {
                               value:
                                   '${ride.distanceKm!.toStringAsFixed(1)} كم',
                             ),
-                          if (ride.durationMinutes != null)
+                          if (smartEta != null)
+                            _PanelMetric(
+                              label: 'الوصول المتوقع',
+                              value:
+                                  '≈ ${(smartEta!.expected.inSeconds / 60).ceil()} د',
+                            )
+                          else if (ride.durationMinutes != null)
                             _PanelMetric(
                               label: 'الوقت المقدر',
                               value: '${ride.durationMinutes} د',
@@ -448,6 +482,18 @@ class _TripPanel extends ConsumerWidget {
                       if (showPrimaryAction) ...[
                         const SizedBox(height: 14),
                         _PrimaryAction(ride: ride, isBusy: isBusy),
+                        if (ride.status == RideStatus.tripStarted) ...[
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            onPressed: isBusy
+                                ? null
+                                : () => ref
+                                      .read(tripControllerProvider.notifier)
+                                      .pauseTrip(),
+                            icon: const Icon(Icons.pause_rounded),
+                            label: const Text('إيقاف الرحلة مؤقتًا'),
+                          ),
+                        ],
                       ],
                     ],
                   ),
@@ -466,6 +512,35 @@ class _TripPanel extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _callRider(BuildContext context, Ride ride) async {
+    final phoneNumber = ride.rider?.phone?.trim();
+    final method = await showCallMethodSheet(
+      context,
+      phoneAvailable: phoneNumber != null && phoneNumber.isNotEmpty,
+    );
+    if (method == null || !context.mounted) return;
+
+    if (method == CallMethod.devicePhone) {
+      var launched = false;
+      try {
+        launched = await launchUrl(
+          Uri(scheme: 'tel', path: phoneNumber!),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {}
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر فتح تطبيق الهاتف على هذا الجهاز.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    await context.push('/rides/${ride.id}/call');
   }
 }
 
@@ -537,28 +612,41 @@ class _PrimaryAction extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.read(tripControllerProvider.notifier);
-    final isCompletable =
-        ride.status == RideStatus.driverArrived ||
-        ride.status == RideStatus.tripStarted;
-    if (ride.status != RideStatus.driverAccepted && !isCompletable) {
+    final action = switch (ride.status) {
+      RideStatus.driverAccepted => (
+        label: 'وصلت إلى نقطة الانطلاق',
+        color: AppTheme.primaryGreen,
+        run: () => controller.markArrived(),
+      ),
+      RideStatus.driverArrived => (
+        label: 'ركب الزبون السيارة',
+        color: AppTheme.primaryGreen,
+        run: () => controller.startTrip(),
+      ),
+      RideStatus.tripStarted => (
+        label: 'إتمام الرحلة',
+        color: const Color(0xFF0F8A3A),
+        run: () => _confirmCashAndComplete(context, ref),
+      ),
+      RideStatus.tripPaused => (
+        label: 'متابعة الرحلة',
+        color: AppTheme.primaryGreen,
+        run: () => controller.resumeTrip(),
+      ),
+      _ => null,
+    };
+    if (action == null) {
       return const SizedBox.shrink();
     }
-    final label = isCompletable ? 'إتمام الرحلة' : 'وصلت إلى نقطة الانطلاق';
     return FilledButton(
       onPressed: isBusy
           ? null
           : () async {
-              if (isCompletable) {
-                await _confirmCashAndComplete(context, ref, ride);
-              } else {
-                await controller.markArrived();
-              }
+              await action.run();
             },
       style: FilledButton.styleFrom(
         minimumSize: const Size.fromHeight(54),
-        backgroundColor: isCompletable
-            ? const Color(0xFF0F8A3A)
-            : AppTheme.primaryGreen,
+        backgroundColor: action.color,
       ),
       child: isBusy
           ? const SizedBox.square(
@@ -569,7 +657,7 @@ class _PrimaryAction extends ConsumerWidget {
               ),
             )
           : Text(
-              label,
+              action.label,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
     );
@@ -579,8 +667,9 @@ class _PrimaryAction extends ConsumerWidget {
 Future<void> _confirmCashAndComplete(
   BuildContext context,
   WidgetRef ref,
-  Ride ride,
 ) async {
+  final ride = ref.read(tripControllerProvider).value;
+  if (ride == null) return;
   final amount = ride.finalFare ?? ride.estimatedFare;
   final confirmed = await showModalBottomSheet<bool>(
     context: context,
@@ -594,10 +683,6 @@ Future<void> _confirmCashAndComplete(
   if (confirmed != true || !context.mounted) return;
 
   final controller = ref.read(tripControllerProvider.notifier);
-  if (ride.status == RideStatus.driverArrived) {
-    final started = await controller.startTrip();
-    if (!started || !context.mounted) return;
-  }
   final completed = await controller.completeTrip();
   if (completed && context.mounted) {
     context.go('/home');
@@ -612,8 +697,9 @@ class _CashConfirmationSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final amountText = amount == null ? 'غير محدد' : formatIqd(amount);
+    final colors = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.white,
+      color: colors.surface,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       clipBehavior: Clip.antiAlias,
       child: SafeArea(
@@ -631,7 +717,7 @@ class _CashConfirmationSheet extends StatelessWidget {
                       width: 104,
                       height: 104,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFEAF7EE),
+                        color: colors.primaryContainer,
                         borderRadius: BorderRadius.circular(34),
                       ),
                       child: const Icon(
@@ -653,19 +739,19 @@ class _CashConfirmationSheet extends StatelessWidget {
                     Text(
                       amountText,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 34,
                         height: 1,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF132218),
+                        color: colors.onSurface,
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                    Text(
                       'تأكد من استلام المبلغ من الراكب قبل إنهاء الرحلة.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Color(0xFF667069),
+                        color: colors.onSurfaceVariant,
                         fontSize: 13.5,
                         fontWeight: FontWeight.w600,
                       ),

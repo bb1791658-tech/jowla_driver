@@ -37,6 +37,14 @@ void main() {
       ),
     );
     expect(find.text('قبول الرحلة'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('ride-offer-countdown-fill')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('ride-offer-countdown-bar')),
+      findsNothing,
+    );
     expect(find.textContaining('د.ع'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 4));

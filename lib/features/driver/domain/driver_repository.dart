@@ -11,6 +11,13 @@ abstract interface class DriverRepository {
     required bool online,
   });
 
+  /// PATCH /drivers/{id}/active-service — اختيار خدمة العمل النشطة من
+  /// الخدمات التي اعتمدها الأدمن للسائق.
+  Future<DriverAccount> chooseActiveService({
+    required String driverId,
+    required String serviceTypeCode,
+  });
+
   /// PUT /drivers/{id}/location — مسار REST البديل لإرسال الموقع
   /// (القناة الأساسية هي حدث Socket driver:location:update).
   Future<void> updateLocation({

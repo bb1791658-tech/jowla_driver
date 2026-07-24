@@ -130,13 +130,14 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
     final pickupAddress = ride?.pickupAddress;
     final destinationName = ride?.dropoffAddress;
     final progress = _countdownProgress();
+    final colors = Theme.of(context).colorScheme;
 
     return SizedBox(
       width: double.infinity,
       child: Material(
-        color: Colors.white,
+        color: colors.surface,
         elevation: 18,
-        shadowColor: Colors.black.withValues(alpha: 0.18),
+        shadowColor: colors.shadow.withValues(alpha: 0.18),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
@@ -152,7 +153,7 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
                     width: 42,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE3E8E5),
+                      color: colors.outlineVariant,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -163,8 +164,8 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
                   '${formatIqd(offer.estimatedFare ?? ride?.estimatedFare)} د.ع',
                   textAlign: TextAlign.center,
                   textDirection: ui.TextDirection.rtl,
-                  style: const TextStyle(
-                    color: Color(0xFF111317),
+                  style: TextStyle(
+                    color: colors.onSurface,
                     fontSize: 36,
                     height: 1.05,
                     fontWeight: FontWeight.w900,
@@ -172,7 +173,7 @@ class _RideRequestSheetState extends State<RideRequestSheet> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Divider(height: 1, color: Color(0xFFE9EEEB)),
+                const Divider(height: 1),
                 const SizedBox(height: 14),
                 Directionality(
                   textDirection: ui.TextDirection.rtl,
@@ -287,6 +288,7 @@ class _TimelineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Row(
       textDirection: ui.TextDirection.ltr,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -305,8 +307,8 @@ class _TimelineRow extends StatelessWidget {
                     textDirection: ui.TextDirection.rtl,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF17251C),
+                    style: TextStyle(
+                      color: colors.onSurface,
                       fontSize: 14,
                       fontWeight: FontWeight.w900,
                       height: 1.1,
@@ -320,8 +322,8 @@ class _TimelineRow extends StatelessWidget {
                     place: metric,
                     point: metricPoint,
                     fallback: 'جار تحديد اسم الموقع',
-                    style: const TextStyle(
-                      color: Color(0xFF566258),
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
                       fontSize: 13,
                       fontWeight: FontWeight.w900,
                       height: 1.15,
@@ -359,7 +361,7 @@ class _TimelineRow extends StatelessWidget {
                   height: 48,
                   margin: const EdgeInsets.symmetric(vertical: 2),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD7E0DA),
+                    color: colors.outlineVariant,
                     borderRadius: BorderRadius.circular(1),
                   ),
                 ),
@@ -376,46 +378,51 @@ class _PlaceNameText extends StatelessWidget {
     required this.place,
     required this.point,
     this.fallback = 'جار تحديد اسم الموقع',
-    this.style = _style,
+    this.style,
   });
 
   final String? place;
   final LatLng? point;
   final String fallback;
-  final TextStyle style;
-
-  static const _style = TextStyle(
-    color: Color(0xFF8A958E),
-    fontSize: 12,
-    fontWeight: FontWeight.w700,
-    height: 1.25,
-  );
+  final TextStyle? style;
 
   @override
   Widget build(BuildContext context) {
     final existing = place?.trim();
-    if (existing != null && existing.isNotEmpty) return _text(existing);
+    if (existing != null && existing.isNotEmpty) {
+      return _text(context, existing);
+    }
     final target = point;
-    if (target == null) return _text(fallback);
+    if (target == null) return _text(context, fallback);
 
     return FutureBuilder<String?>(
       future: PlaceNameService.instance.nameFor(target),
       builder: (context, snapshot) {
         final resolved = snapshot.data?.trim();
-        if (resolved != null && resolved.isNotEmpty) return _text(resolved);
-        return _text(fallback);
+        if (resolved != null && resolved.isNotEmpty) {
+          return _text(context, resolved);
+        }
+        return _text(context, fallback);
       },
     );
   }
 
-  Widget _text(String value) {
+  Widget _text(BuildContext context, String value) {
+    final effectiveStyle =
+        style ??
+        TextStyle(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          height: 1.25,
+        );
     return Text(
       value,
       textAlign: TextAlign.right,
       textDirection: ui.TextDirection.rtl,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: style,
+      style: effectiveStyle,
     );
   }
 }
@@ -433,18 +440,19 @@ class _TripStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Container(
       constraints: const BoxConstraints(minHeight: 54),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFFFAFBFA),
+        color: colors.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE8EEEA)),
+        border: Border.all(color: colors.outlineVariant),
       ),
       child: Row(
         textDirection: ui.TextDirection.rtl,
         children: [
-          Icon(icon, color: const Color(0xFF5F6A62), size: 22),
+          Icon(icon, color: colors.onSurfaceVariant, size: 22),
           const SizedBox(width: 9),
           Expanded(
             child: Column(
@@ -455,8 +463,8 @@ class _TripStat extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF8A958E),
+                  style: TextStyle(
+                    color: colors.onSurfaceVariant,
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                     height: 1.1,
@@ -467,8 +475,8 @@ class _TripStat extends StatelessWidget {
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF17251C),
+                  style: TextStyle(
+                    color: colors.onSurface,
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
                     height: 1.1,
@@ -509,23 +517,24 @@ class _AcceptButton extends StatelessWidget {
           onTap: onPressed,
           child: Ink(
             decoration: BoxDecoration(
-              color: AppTheme.primaryGreen,
+              color: const Color(0xFF17221B),
               borderRadius: BorderRadius.circular(12),
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final overlayWidth = constraints.maxWidth * progress;
+                final fillWidth = constraints.maxWidth * progress;
                 return Stack(
                   fit: StackFit.expand,
                   children: [
                     Align(
-                      alignment: Alignment.centerLeft,
+                      alignment: Alignment.centerRight,
                       child: AnimatedContainer(
+                        key: const ValueKey('ride-offer-countdown-fill'),
                         duration: const Duration(milliseconds: 350),
                         curve: Curves.easeOutCubic,
-                        width: overlayWidth,
+                        width: fillWidth,
                         decoration: const BoxDecoration(
-                          color: Color(0xFF17221B),
+                          color: AppTheme.primaryGreen,
                         ),
                       ),
                     ),

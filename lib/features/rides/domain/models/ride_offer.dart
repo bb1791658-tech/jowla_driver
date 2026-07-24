@@ -84,12 +84,12 @@ class RideOffer {
   }
 
   RideOffer withRide(Ride ride) => RideOffer(
-        rideId: rideId,
-        offerId: offerId,
-        expiresAt: expiresAt,
-        pickup: pickup ?? ride.pickup,
-        estimatedFare: estimatedFare ?? ride.estimatedFare,
-        currency: currency,
-        ride: ride,
-      );
+    rideId: rideId,
+    offerId: offerId,
+    expiresAt: expiresAt,
+    pickup: pickup ?? ride.pickup,
+    estimatedFare: estimatedFare ?? ride.estimatedFare,
+    currency: currency,
+    ride: ride,
+  );
 }

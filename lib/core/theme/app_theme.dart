@@ -11,22 +11,43 @@ abstract final class AppTheme {
       primary: primaryGreen,
       surface: Colors.white,
     );
+    return _build(scheme: scheme, scaffoldBackground: background);
+  }
+
+  static ThemeData _build({
+    required ColorScheme scheme,
+    required Color scaffoldBackground,
+  }) {
+    final baseTextTheme = ThemeData.light().textTheme;
     return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: background,
-      textTheme: GoogleFonts.cairoTextTheme(),
+      scaffoldBackgroundColor: scaffoldBackground,
+      textTheme: GoogleFonts.cairoTextTheme(baseTextTheme),
       appBarTheme: AppBarTheme(
         elevation: 0,
         centerTitle: false,
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF17221B),
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
         titleTextStyle: GoogleFonts.cairo(
           fontSize: 20,
           fontWeight: FontWeight.w700,
-          color: const Color(0xFF17221B),
+          color: scheme.onSurface,
         ),
       ),
+      cardTheme: CardThemeData(
+        color: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: scheme.surface,
+        surfaceTintColor: Colors.transparent,
+      ),
+      dividerTheme: DividerThemeData(color: scheme.outlineVariant),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size.fromHeight(54),
@@ -41,14 +62,14 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: Colors.white,
+        fillColor: scheme.surfaceContainerHighest,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: Color(0xFFE1E8E3)),
+          borderSide: BorderSide(color: scheme.outlineVariant),
         ),
       ),
     );

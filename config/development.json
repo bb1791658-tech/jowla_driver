@@ -1,1 +1,8 @@
-{}
+{
+  "BACKEND_ORIGINS": "http://192.168.0.151:3000,http://MacBook-Air-bas.local:3000,http://localhost:3000,http://10.0.2.2:3000",
+  "MAP_ORIGIN": "http://192.168.0.151:8080",
+  "MAP_DATA_VERSION": "iraq-2026-07",
+  "ROAD_ROUTE_BASE_URL": "http://192.168.0.151:5001",
+  "GEOCODING_BASE_URL": "http://192.168.0.151:7070",
+  "PUSH_NOTIFICATIONS_ENABLED": false
+}

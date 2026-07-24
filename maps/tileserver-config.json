@@ -1,0 +1,28 @@
+{
+  "options": {
+    "paths": {
+      "root": "/data",
+      "styles": "styles",
+      "fonts": "fonts",
+      "sprites": "sprites",
+      "mbtiles": "."
+    },
+    "serveAllFonts": false,
+    "serveAllStyles": false
+  },
+  "styles": {
+    "day": {
+      "style": "jowla-day.json",
+      "serve_rendered": true,
+      "serve_data": true,
+      "tilejson": {
+        "bounds": [38.7936, 29.0612, 48.5759, 37.3809]
+      }
+    }
+  },
+  "data": {
+    "iraq": {
+      "mbtiles": "iraq.mbtiles"
+    }
+  }
+}

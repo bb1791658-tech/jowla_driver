@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jowla_driver/core/network/api_client.dart';
+import 'package:jowla_driver/core/services/backend_availability_events.dart';
 import 'package:jowla_driver/core/services/session_events.dart';
 import 'package:jowla_driver/core/storage/session_store.dart';
 import 'package:jowla_driver/features/auth/domain/models/driver_session.dart';
@@ -20,20 +21,19 @@ class _ScriptedAdapter implements HttpClientAdapter {
     RequestOptions options,
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
-  ) =>
-      handler(options);
+  ) => handler(options);
 
   @override
   void close({bool force = false}) {}
 }
 
 ResponseBody _json(Object data, int status) => ResponseBody.fromString(
-      jsonEncode(data),
-      status,
-      headers: {
-        Headers.contentTypeHeader: [Headers.jsonContentType],
-      },
-    );
+  jsonEncode(data),
+  status,
+  headers: {
+    Headers.contentTypeHeader: [Headers.jsonContentType],
+  },
+);
 
 Future<SessionStore> _storeWithSession() async {
   final store = SessionStore(InMemorySecureStore());
@@ -61,8 +61,10 @@ void main() {
     final refreshDio = Dio(BaseOptions(baseUrl: 'http://backend/api/v1'));
 
     mainDio.httpClientAdapter = _ScriptedAdapter((options) async {
-      requestLog.add('${options.method} ${options.path} '
-          '${options.headers['Authorization']}');
+      requestLog.add(
+        '${options.method} ${options.path} '
+        '${options.headers['Authorization']}',
+      );
       final isRetry = options.headers['Authorization'] == 'Bearer new-access';
       if (options.path == '/drivers/me' && !isRetry) {
         return _json({'message': 'Unauthorized'}, 401);
@@ -72,10 +74,10 @@ void main() {
     refreshDio.httpClientAdapter = _ScriptedAdapter((options) async {
       expect(options.path, '/auth/refresh');
       expect(options.data, {'refreshToken': 'old-refresh'});
-      return _json(
-        {'accessToken': 'new-access', 'refreshToken': 'new-refresh'},
-        200,
-      );
+      return _json({
+        'accessToken': 'new-access',
+        'refreshToken': 'new-refresh',
+      }, 200);
     });
 
     final client = ApiClient(
@@ -90,10 +92,7 @@ void main() {
     // تم تدوير التوكنين معًا كما يفرض auth.service.refresh.
     expect(await store.readAccessToken(), 'new-access');
     expect(await store.readRefreshToken(), 'new-refresh');
-    expect(
-      requestLog.where((line) => line.contains('/drivers/me')).length,
-      2,
-    );
+    expect(requestLog.where((line) => line.contains('/drivers/me')).length, 2);
     events.dispose();
   });
 
@@ -130,6 +129,39 @@ void main() {
     events.dispose();
   });
 
+  test('فشل الشبكة يبلغ بوابة جاهزية الخادم فورًا', () async {
+    final store = SessionStore(InMemorySecureStore());
+    final sessionEvents = SessionEvents();
+    final availabilityEvents = BackendAvailabilityEvents();
+    final dio = Dio(BaseOptions(baseUrl: 'http://backend/api/v1'));
+    dio.httpClientAdapter = _ScriptedAdapter((options) async {
+      throw DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+        error: 'offline',
+      );
+    });
+    final unavailable = availabilityEvents.unavailable.first;
+    final client = ApiClient(
+      store,
+      sessionEvents,
+      client: dio,
+      availabilityEvents: availabilityEvents,
+    );
+
+    await expectLater(
+      client.dio.get<Map<String, dynamic>>('/drivers/me'),
+      throwsA(isA<DioException>()),
+    );
+    await expectLater(
+      unavailable.timeout(const Duration(seconds: 1)),
+      completes,
+    );
+
+    sessionEvents.dispose();
+    availabilityEvents.dispose();
+  });
+
   test('mapError يترجم رسائل Backend المعروفة إلى العربية', () {
     final error = DioException(
       requestOptions: RequestOptions(path: '/auth/otp/verify'),
@@ -144,6 +176,30 @@ void main() {
       ApiClient.mapError(error).message,
       contains('لا يوجد حساب سائق معتمد'),
     );
+
+    final missingType = DioException(
+      requestOptions: RequestOptions(path: '/auth/otp/request'),
+      response: Response(
+        requestOptions: RequestOptions(path: '/auth/otp/request'),
+        statusCode: 400,
+        data: {'message': 'Account type is required'},
+      ),
+      type: DioExceptionType.badResponse,
+    );
+    expect(ApiClient.mapError(missingType).message, contains('نوع الحساب'));
+
+    final invalidPhone = DioException(
+      requestOptions: RequestOptions(path: '/auth/otp/request'),
+      response: Response(
+        requestOptions: RequestOptions(path: '/auth/otp/request'),
+        statusCode: 400,
+        data: {
+          'message': ['Iraqi phone number is required'],
+        },
+      ),
+      type: DioExceptionType.badResponse,
+    );
+    expect(ApiClient.mapError(invalidPhone).message, contains('+9647'));
 
     final timeout = DioException(
       requestOptions: RequestOptions(path: '/rides/driver/current'),

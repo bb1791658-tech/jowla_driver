@@ -21,8 +21,9 @@ class BackendRideRepository implements RideRepository {
   @override
   Future<List<RideOffer>> pendingOffers() async {
     try {
-      final response =
-          await _client.dio.get<List<dynamic>>(ApiPaths.driverOffers);
+      final response = await _client.dio.get<List<dynamic>>(
+        ApiPaths.driverOffers,
+      );
       final items = response.data ?? const [];
       final offers = <RideOffer>[];
       for (final item in items) {
@@ -60,10 +61,7 @@ class BackendRideRepository implements RideRepository {
       _rideCall(() => _client.dio.get(ApiPaths.ride(rideId)));
 
   @override
-  Future<Ride> acceptOffer({
-    required String rideId,
-    required String offerId,
-  }) =>
+  Future<Ride> acceptOffer({required String rideId, required String offerId}) =>
       _rideCall(() => _client.dio.post(ApiPaths.acceptOffer(rideId, offerId)));
 
   @override
@@ -87,6 +85,14 @@ class BackendRideRepository implements RideRepository {
       _rideCall(() => _client.dio.post(ApiPaths.startRide(rideId)));
 
   @override
+  Future<Ride> pauseTrip(String rideId) =>
+      _rideCall(() => _client.dio.post(ApiPaths.pauseRide(rideId)));
+
+  @override
+  Future<Ride> resumeTrip(String rideId) =>
+      _rideCall(() => _client.dio.post(ApiPaths.resumeRide(rideId)));
+
+  @override
   Future<Ride> completeTrip(String rideId) =>
       _rideCall(() => _client.dio.post(ApiPaths.completeRide(rideId)));
 
@@ -94,9 +100,7 @@ class BackendRideRepository implements RideRepository {
   Future<Ride> cancelRide(String rideId) =>
       _rideCall(() => _client.dio.post(ApiPaths.cancelRide(rideId)));
 
-  Future<Ride> _rideCall(
-    Future<Response<dynamic>> Function() request,
-  ) async {
+  Future<Ride> _rideCall(Future<Response<dynamic>> Function() request) async {
     try {
       final response = await request();
       final data = response.data;

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/config/app_config.dart';
+import '../../../core/utils/jowla_image_provider.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../auth/domain/models/driver_session.dart';
 import '../../driver/data/backend_driver_repository.dart';
@@ -10,10 +10,7 @@ import '../../driver/domain/models/driver_account.dart';
 
 /// بيانات حقيقية من GET /drivers/me.
 final driverAccountProvider = FutureProvider.autoDispose<DriverAccount>((ref) {
-  final profile = ref.watch(authSessionProvider).valueOrNull;
-  if (profile?.id == AppConfig.devDriverId) {
-    return DriverAccount(profile: profile!);
-  }
+  ref.watch(authSessionProvider);
   return ref.watch(driverRepositoryProvider).me();
 });
 
@@ -22,6 +19,9 @@ class ProfileScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.listen(authSessionProvider, (_, _) {
+      ref.invalidate(driverAccountProvider);
+    });
     final account = ref.watch(driverAccountProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('حسابي')),
@@ -60,6 +60,7 @@ class _ProfileBody extends StatelessWidget {
     final profile = account.profile;
     final status = profile.status;
     final vehicle = account.activeVehicle;
+    final profilePhoto = jowlaImageProvider(profile.photoUrl);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -68,9 +69,12 @@ class _ProfileBody extends StatelessWidget {
             padding: const EdgeInsets.all(20),
             child: Row(
               children: [
-                const CircleAvatar(
+                CircleAvatar(
                   radius: 34,
-                  child: Icon(Icons.person_rounded, size: 36),
+                  backgroundImage: profilePhoto,
+                  child: profilePhoto == null
+                      ? const Icon(Icons.person_rounded, size: 36)
+                      : null,
                 ),
                 const SizedBox(width: 16),
                 Expanded(

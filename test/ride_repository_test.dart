@@ -62,16 +62,16 @@ BackendRideRepository _repo(_RouteAdapter adapter) {
 }
 
 Map<String, Object> _rideJson(String status) => {
-      'id': 'ride-1',
-      'status': status,
-      'pickupLat': '30.9601000',
-      'pickupLng': '46.9769000',
-      'dropoffLat': '30.9700000',
-      'dropoffLng': '46.9900000',
-      'estimatedFare': '5000.00',
-      'distanceKm': '3.250',
-      'currency': 'IQD',
-    };
+  'id': 'ride-1',
+  'status': status,
+  'pickupLat': '30.9601000',
+  'pickupLng': '46.9769000',
+  'dropoffLat': '30.9700000',
+  'dropoffLng': '46.9900000',
+  'estimatedFare': '5000.00',
+  'distanceKm': '3.250',
+  'currency': 'IQD',
+};
 
 void main() {
   test('currentRide يفسر null عندما لا توجد رحلة نشطة', () async {
@@ -88,10 +88,9 @@ void main() {
         _rideJson('DRIVER_ACCEPTED'),
       ),
     });
-    final ride = await _repo(adapter).acceptOffer(
-      rideId: 'ride-1',
-      offerId: 'offer-1',
-    );
+    final ride = await _repo(
+      adapter,
+    ).acceptOffer(rideId: 'ride-1', offerId: 'offer-1');
     expect(ride.status, RideStatus.driverAccepted);
     expect(adapter.log, ['POST /rides/ride-1/offers/offer-1/accept']);
   });
@@ -119,6 +118,8 @@ void main() {
     final adapter = _RouteAdapter({
       'POST /rides/ride-1/driver-arrived': (200, _rideJson('DRIVER_ARRIVED')),
       'POST /rides/ride-1/start': (200, _rideJson('TRIP_STARTED')),
+      'POST /rides/ride-1/pause': (200, _rideJson('TRIP_PAUSED')),
+      'POST /rides/ride-1/resume': (200, _rideJson('TRIP_STARTED')),
       'POST /rides/ride-1/complete': (
         200,
         {
@@ -134,6 +135,8 @@ void main() {
       RideStatus.driverArrived,
     );
     expect((await repo.startTrip('ride-1')).status, RideStatus.tripStarted);
+    expect((await repo.pauseTrip('ride-1')).status, RideStatus.tripPaused);
+    expect((await repo.resumeTrip('ride-1')).status, RideStatus.tripStarted);
     final completed = await repo.completeTrip('ride-1');
     expect(completed.status, RideStatus.completed);
     expect(completed.payment?.netAmount, 5000);

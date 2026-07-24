@@ -2,13 +2,14 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../../core/config/app_config.dart';
+import '../../../core/maps/jowla_vector_map.dart';
 import '../../../core/services/road_route_service.dart';
+import '../../../core/services/smart_route_controller.dart';
+import '../../../core/services/smart_zones_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../rides/domain/models/ride.dart';
 import '../../rides/domain/models/ride_offer.dart';
@@ -27,13 +28,16 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  final _mapController = MapController();
+  final _mapController = JowlaMapController();
+  late final SmartRouteController _smartTripRoute;
   String? _lastOfferFocusSignature;
   String? _lastTripFocusSignature;
 
   @override
   void initState() {
     super.initState();
+    _smartTripRoute = SmartRouteController(ref.read(roadRouteServiceProvider))
+      ..addListener(_onSmartRouteChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(
@@ -45,14 +49,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   @override
+  void dispose() {
+    _smartTripRoute
+      ..removeListener(_onSmartRouteChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onSmartRouteChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final home = ref.watch(driverHomeControllerProvider);
-    final trip = ref.watch(tripControllerProvider).valueOrNull;
-    final position = home.lastPosition;
-    final driverPoint = position == null
-        ? null
-        : LatLng(position.latitude, position.longitude);
-    final heading = position?.heading;
+    final smartZones = ref.watch(smartMapZonesProvider).value ?? const [];
+    final colors = Theme.of(context).colorScheme;
+    final trip = ref.watch(tripControllerProvider).value;
+    final driverPoint = home.mapPoint;
+    final heading = home.mapHeading;
+    final intercityEnabled = home.services.any(
+      (service) => service.code == 'intercity' && service.isActive,
+    );
 
     ref.listen(driverHomeControllerProvider, (previous, next) {
       final message = next.offerError;
@@ -76,7 +94,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         : null;
     final activeOfferRoute = activeOfferRouteRequest == null
         ? null
-        : ref.watch(roadRoutePathProvider(activeOfferRouteRequest)).valueOrNull;
+        : ref.watch(roadRoutePathProvider(activeOfferRouteRequest)).value;
     final activeOfferFallbackRoute =
         activeOfferPickup != null && activeOfferDropoff != null
         ? <LatLng>[activeOfferPickup, activeOfferDropoff]
@@ -93,13 +111,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final activeTripStart = hasActiveTrip
         ? (headingToPickup ? driverPoint ?? trip.pickup : trip.pickup)
         : null;
-    final activeTripRouteRequest =
-        activeTripStart != null && activeTripTarget != null
-        ? RoadRouteRequest.fromPoints(activeTripStart, activeTripTarget)
+    _scheduleSmartTripRoute(
+      activeTripStart,
+      activeTripTarget,
+      accuracyMeters: home.lastPosition?.accuracy ?? 0,
+    );
+    final activeTripRoute = _smartTripRoute.target == activeTripTarget
+        ? _smartTripRoute.route?.points
         : null;
-    final activeTripRoute = activeTripRouteRequest == null
-        ? null
-        : ref.watch(roadRoutePathProvider(activeTripRouteRequest)).valueOrNull;
     final activeTripFallbackRoute =
         activeTripStart != null && activeTripTarget != null
         ? <LatLng>[activeTripStart, activeTripTarget]
@@ -125,57 +144,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           if (mapInitialCenter == null)
             const _LocationPendingBackground()
           else
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: mapInitialCenter,
-                initialZoom: 14,
-                minZoom: 5,
-                maxZoom: 18,
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-                ),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: AppConfig.mapTileUrlTemplate,
-                  userAgentPackageName: 'com.jowla.driver',
-                ),
+            JowlaVectorMap(
+              controller: _mapController,
+              initialCenter: mapInitialCenter,
+              initialZoom: 14,
+              polygons: [
+                for (final zone in smartZones)
+                  JowlaMapPolygon(
+                    points: zone.boundary,
+                    color: _smartZoneColor(zone),
+                    outlineColor: _smartZoneOutlineColor(zone),
+                  ),
+              ],
+              polylines: [
                 if (activeOffer == null &&
                     hasActiveTrip &&
                     activeTripRoutePoints.length >= 2)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: activeTripRoutePoints,
-                        strokeWidth: 5,
-                        color: const Color(0xFF1D6BFF),
-                      ),
-                    ],
+                  JowlaMapPolyline(
+                    points: activeTripRoutePoints,
+                    color: const Color(0xFF1D6BFF),
                   ),
                 if (activeOffer != null && activeOfferRoutePoints.length >= 2)
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: activeOfferRoutePoints,
-                        strokeWidth: 5,
-                        color: AppTheme.primaryGreen,
-                      ),
-                    ],
+                  JowlaMapPolyline(
+                    points: activeOfferRoutePoints,
+                    color: AppTheme.primaryGreen,
                   ),
+              ],
+              markers: [
                 if (driverPoint != null && activeOffer == null)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: driverPoint,
-                        width: 48,
-                        height: 72,
-                        child: DriverMapCarMarker(headingDegrees: heading),
-                      ),
-                    ],
+                  JowlaMapMarker(
+                    point: driverPoint,
+                    size: const Size(48, 72),
+                    smoothMovement: true,
+                    child: DriverMapCarMarker(headingDegrees: heading),
                   ),
                 if (activeOffer != null)
-                  _OfferMapLayer(
+                  ..._offerMapMarkers(
                     offer: activeOffer,
                     driverLocation: driverPoint,
                     headingDegrees: heading,
@@ -187,7 +191,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
-                  if (activeOffer == null) const _BalanceSummaryCard(),
+                  if (activeOffer == null)
+                    _BalanceSummaryCard(
+                      balance: home.wallet?.balance,
+                      isLoading: home.isWalletLoading,
+                      hasError: home.walletError != null,
+                      activeRideId: hasActiveTrip ? trip.id : null,
+                      onPressed: () => context.push('/wallet'),
+                    ),
+                  if (activeOffer == null) ...[
+                    const SizedBox(height: 8),
+                    _IntercityServiceCard(
+                      isEnabled: intercityEnabled,
+                      onPressed: () => context.push('/intercity'),
+                    ),
+                  ],
                   if (home.error != null) ...[
                     const SizedBox(height: 8),
                     Material(
@@ -212,8 +230,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       alignment: AlignmentDirectional.centerEnd,
                       child: FloatingActionButton.small(
                         heroTag: 'recenter',
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black87,
+                        backgroundColor: colors.surface,
+                        foregroundColor: colors.onSurface,
                         onPressed: driverPoint == null
                             ? null
                             : () => _mapController.move(driverPoint, 16),
@@ -283,6 +301,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  void _scheduleSmartTripRoute(
+    LatLng? start,
+    LatLng? target, {
+    required double accuracyMeters,
+  }) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (start == null || target == null) {
+        if (_smartTripRoute.target != null) _smartTripRoute.reset();
+        return;
+      }
+      unawaited(
+        _smartTripRoute.update(
+          current: start,
+          target: target,
+          accuracyMeters: accuracyMeters,
+        ),
+      );
+    });
+  }
+
   void _scheduleOfferFocus(RideOffer? offer, LatLng? driverPoint) {
     if (offer == null) {
       _lastOfferFocusSignature = null;
@@ -350,12 +389,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (points.length == 1) {
         _mapController.move(points.first, 15);
       } else {
-        _mapController.fitCamera(
-          CameraFit.coordinates(
-            coordinates: points,
-            maxZoom: 16,
-            padding: const EdgeInsets.fromLTRB(104, 112, 104, 390),
-          ),
+        _mapController.fitCoordinates(
+          points,
+          maxZoom: 16,
+          padding: const EdgeInsets.fromLTRB(104, 112, 104, 390),
         );
       }
     } catch (_) {
@@ -371,17 +408,131 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final points = <LatLng>[start, target];
 
     try {
-      _mapController.fitCamera(
-        CameraFit.coordinates(
-          coordinates: points,
-          maxZoom: 16,
-          padding: const EdgeInsets.fromLTRB(80, 220, 80, 260),
-        ),
+      _mapController.fitCoordinates(
+        points,
+        maxZoom: 16,
+        padding: const EdgeInsets.fromLTRB(80, 220, 80, 260),
       );
     } catch (_) {
       // قد تتغير حالة الرحلة قبل اكتمال بناء الخريطة؛ في هذه الحالة
       // نترك موضع الكاميرا الحالي بدل تعطيل الشاشة.
     }
+  }
+}
+
+Color _smartZoneColor(SmartMapZone zone) => switch (zone.kind) {
+  SmartZoneKind.officialPickup => const Color(0x2834A853),
+  SmartZoneKind.noPickup => const Color(0x30E53935),
+  SmartZoneKind.danger => const Color(0x36D32F2F),
+  SmartZoneKind.closure => const Color(0x3AFF8F00),
+  SmartZoneKind.serviceArea => const Color(0x202F80ED),
+  SmartZoneKind.pricing => const Color(0x28A855F7),
+  SmartZoneKind.demand => switch (zone.demand) {
+    SmartZoneDemand.moderate => const Color(0x242F80ED),
+    SmartZoneDemand.high => const Color(0x2EF2994A),
+    SmartZoneDemand.veryHigh => const Color(0x38EB5757),
+  },
+};
+
+Color _smartZoneOutlineColor(SmartMapZone zone) => switch (zone.kind) {
+  SmartZoneKind.officialPickup => const Color(0x9034A853),
+  SmartZoneKind.noPickup => const Color(0xA0E53935),
+  SmartZoneKind.danger => const Color(0xB0B71C1C),
+  SmartZoneKind.closure => const Color(0xB0F57C00),
+  SmartZoneKind.serviceArea => const Color(0x803B82F6),
+  SmartZoneKind.pricing => const Color(0x909333EA),
+  SmartZoneKind.demand => switch (zone.demand) {
+    SmartZoneDemand.moderate => const Color(0x703B82F6),
+    SmartZoneDemand.high => const Color(0x80F59E0B),
+    SmartZoneDemand.veryHigh => const Color(0x90EF4444),
+  },
+};
+
+class _IntercityServiceCard extends StatelessWidget {
+  const _IntercityServiceCard({
+    required this.isEnabled,
+    required this.onPressed,
+  });
+
+  final bool isEnabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      key: const ValueKey('intercity-service-card'),
+      color: colors.primaryContainer,
+      elevation: 6,
+      shadowColor: colors.primary.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colors.primary,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(Icons.route_rounded, color: colors.onPrimary),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'بين المحافظات',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'جديد',
+                            style: TextStyle(
+                              color: colors.onPrimary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      isEnabled
+                          ? 'إنشاء عرض مقاعد وإدارة الرحلات المجدولة'
+                          : 'استعرض الخدمة؛ سيؤكد الخادم أهلية النشر',
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_left_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -399,10 +550,11 @@ class _OtherOfferPriceButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fare = formatIqd(offer.estimatedFare ?? offer.ride?.estimatedFare);
+    final colors = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.white,
+      color: colors.surface,
       elevation: 10,
-      shadowColor: Colors.black.withValues(alpha: 0.14),
+      shadowColor: colors.shadow.withValues(alpha: 0.14),
       borderRadius: BorderRadius.circular(999),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -413,7 +565,7 @@ class _OtherOfferPriceButton extends StatelessWidget {
           padding: const EdgeInsetsDirectional.only(start: 14, end: 10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFFE0ECE4)),
+            border: Border.all(color: colors.outlineVariant),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -490,76 +642,80 @@ class _LocationPendingBackground extends StatelessWidget {
   }
 }
 
-class _OfferMapLayer extends StatelessWidget {
-  const _OfferMapLayer({
-    required this.offer,
-    required this.driverLocation,
-    required this.headingDegrees,
-  });
+List<JowlaMapMarker> _offerMapMarkers({
+  required RideOffer offer,
+  required LatLng? driverLocation,
+  required double? headingDegrees,
+}) {
+  final pickup = offer.pickup;
+  final dropoff = offer.ride?.dropoff;
+  final pickupDistanceKm = pickup != null && driverLocation != null
+      ? const Distance().as(LengthUnit.Kilometer, driverLocation, pickup)
+      : null;
+  final showCarBelowPickup =
+      pickupDistanceKm != null && pickupDistanceKm < 0.08;
 
-  final RideOffer offer;
-  final LatLng? driverLocation;
-  final double? headingDegrees;
-
-  @override
-  Widget build(BuildContext context) {
-    final pickup = offer.pickup;
-    final dropoff = offer.ride?.dropoff;
-    final pickupDistanceKm = pickup != null && driverLocation != null
-        ? const Distance().as(LengthUnit.Kilometer, driverLocation!, pickup)
-        : null;
-    final showCarBelowPickup =
-        pickupDistanceKm != null && pickupDistanceKm < 0.08;
-
-    return MarkerLayer(
-      markers: [
-        if (driverLocation != null)
-          Marker(
-            point: driverLocation!,
-            width: showCarBelowPickup ? 56 : 48,
-            height: showCarBelowPickup ? 102 : 72,
-            child: showCarBelowPickup
-                ? Transform.translate(
-                    offset: const Offset(0, 44),
-                    child: DriverMapCarMarker(
-                      headingDegrees: headingDegrees,
-                      width: 28,
-                      height: 42,
-                    ),
-                  )
-                : DriverMapCarMarker(headingDegrees: headingDegrees),
-          ),
-        if (pickup != null)
-          Marker(
-            alignment: Alignment.bottomCenter,
-            rotate: true,
-            point: pickup,
-            width: PickupMapMarker.markerWidth,
-            height: PickupMapMarker.markerHeight(showCarBelowPickup ? 8 : 0),
-            child: PickupMapMarker(
-              distanceKm: pickupDistanceKm,
-              liftPixels: showCarBelowPickup ? 8 : 0,
-            ),
-          ),
-        if (dropoff != null)
-          Marker(
-            alignment: Alignment.bottomCenter,
-            rotate: true,
-            point: dropoff,
-            width: DropoffMapMarker.markerWidth,
-            height: DropoffMapMarker.markerHeight,
-            child: const DropoffMapMarker(),
-          ),
-      ],
-    );
-  }
+  return [
+    if (driverLocation != null)
+      JowlaMapMarker(
+        point: driverLocation,
+        size: Size(showCarBelowPickup ? 56 : 48, showCarBelowPickup ? 102 : 72),
+        smoothMovement: true,
+        child: showCarBelowPickup
+            ? Transform.translate(
+                offset: const Offset(0, 44),
+                child: DriverMapCarMarker(
+                  headingDegrees: headingDegrees,
+                  width: 28,
+                  height: 42,
+                ),
+              )
+            : DriverMapCarMarker(headingDegrees: headingDegrees),
+      ),
+    if (pickup != null)
+      JowlaMapMarker(
+        alignment: Alignment.bottomCenter,
+        point: pickup,
+        size: Size(
+          PickupMapMarker.markerWidth,
+          PickupMapMarker.markerHeight(showCarBelowPickup ? 8 : 0),
+        ),
+        child: PickupMapMarker(
+          distanceKm: pickupDistanceKm,
+          liftPixels: showCarBelowPickup ? 8 : 0,
+        ),
+      ),
+    if (dropoff != null)
+      JowlaMapMarker(
+        alignment: Alignment.bottomCenter,
+        point: dropoff,
+        size: const Size(
+          DropoffMapMarker.markerWidth,
+          DropoffMapMarker.markerHeight,
+        ),
+        child: const DropoffMapMarker(),
+      ),
+  ];
 }
 
 class _BalanceSummaryCard extends StatelessWidget {
-  const _BalanceSummaryCard();
+  const _BalanceSummaryCard({
+    required this.balance,
+    required this.isLoading,
+    required this.hasError,
+    required this.activeRideId,
+    required this.onPressed,
+  });
+
+  final double? balance;
+  final bool isLoading;
+  final bool hasError;
+  final String? activeRideId;
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return SizedBox(
       height: 68,
       width: double.infinity,
@@ -569,69 +725,96 @@ class _BalanceSummaryCard extends StatelessWidget {
           Material(
             elevation: 4,
             borderRadius: BorderRadius.circular(18),
-            color: Colors.white,
-            shadowColor: Colors.black.withValues(alpha: 0.12),
-            child: Container(
-              width: 220,
-              height: 68,
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-              child: const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'الرصيد الحالي',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Color(0xFF6B756E),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      height: 1,
+            color: colors.surface,
+            shadowColor: colors.shadow.withValues(alpha: 0.12),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onPressed,
+              child: Container(
+                width: 220,
+                height: 68,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 8,
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'الرصيد الحالي',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 7),
-                  Text(
-                    '٠ د.ع',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Color(0xFF17251C),
-                      fontSize: 23,
-                      fontWeight: FontWeight.w900,
-                      height: 1,
+                    const SizedBox(height: 7),
+                    Text(
+                      _balanceText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: hasError ? colors.error : colors.onSurface,
+                        fontSize: 23,
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-          const Align(
+          Align(
             alignment: Alignment.centerLeft,
-            child: _MessagesButton(),
+            child: _MessagesButton(activeRideId: activeRideId),
           ),
         ],
       ),
     );
   }
+
+  String get _balanceText {
+    if (isLoading && balance == null) return '...';
+    if (balance == null) return hasError ? 'غير متاح' : '٠ د.ع';
+    return '${formatIqd(balance)} د.ع';
+  }
 }
 
 class _MessagesButton extends StatelessWidget {
-  const _MessagesButton();
+  const _MessagesButton({required this.activeRideId});
+
+  final String? activeRideId;
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
     return Material(
       elevation: 4,
       borderRadius: BorderRadius.circular(18),
-      color: Colors.white,
-      shadowColor: Colors.black.withValues(alpha: 0.12),
+      color: colors.surface,
+      shadowColor: colors.shadow.withValues(alpha: 0.12),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () {},
-        child: const SizedBox.square(
+        onTap: () {
+          final rideId = activeRideId;
+          if (rideId != null && rideId.isNotEmpty) {
+            context.push('/rides/$rideId/chat');
+            return;
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('تتوفر المراسلة أثناء الرحلة النشطة.'),
+            ),
+          );
+        },
+        child: SizedBox.square(
           dimension: 56,
-          child: Icon(Icons.forum_rounded, size: 24, color: Color(0xFF234E2D)),
+          child: Icon(Icons.forum_rounded, size: 24, color: colors.primary),
         ),
       ),
     );

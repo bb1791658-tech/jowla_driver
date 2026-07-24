@@ -33,10 +33,10 @@ class _DriverShellState extends ConsumerState<DriverShell> {
   @override
   Widget build(BuildContext context) {
     final home = ref.watch(driverHomeControllerProvider);
-    final activeRide = ref.watch(tripControllerProvider).valueOrNull;
+    final activeRide = ref.watch(tripControllerProvider).value;
     _openActiveRideOnce(activeRide);
     ref.listen(tripControllerProvider, (previous, next) {
-      _openActiveRideOnce(next.valueOrNull);
+      _openActiveRideOnce(next.value);
     });
     final hasIncomingOffer = home.activeOffer != null;
     return Scaffold(
@@ -53,19 +53,65 @@ class _DriverShellState extends ConsumerState<DriverShell> {
                 state: home,
                 onDestinationSelected: (value) =>
                     setState(() => _index = value),
-                onWorkPressed: () => _toggleWork(home),
+                onWorkPressed: () => unawaited(_toggleWork(home)),
               ),
       ),
     );
   }
 
-  void _toggleWork(DriverHomeState state) {
+  Future<void> _toggleWork(DriverHomeState state) async {
     final controller = ref.read(driverHomeControllerProvider.notifier);
     if (state.isOnline) {
       unawaited(controller.goOffline());
     } else {
+      if (state.services.length == 1 &&
+          state.activeService?.code != state.services.first.code) {
+        await controller.chooseActiveService(state.services.first.code);
+      } else if (state.services.length > 1) {
+        final selected = await _pickService(state);
+        if (selected == null) return;
+        await controller.chooseActiveService(selected);
+      }
       unawaited(controller.goOnline());
     }
+  }
+
+  Future<String?> _pickService(DriverHomeState state) {
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'اختر نوع العمل',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 12),
+              for (final service in state.services)
+                ListTile(
+                  leading: Icon(
+                    service.code == 'intercity'
+                        ? Icons.route_rounded
+                        : Icons.location_city_rounded,
+                  ),
+                  title: Text(service.name),
+                  trailing: state.activeService?.code == service.code
+                      ? const Icon(Icons.check_circle_rounded)
+                      : null,
+                  onTap: () => Navigator.of(context).pop(service.code),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _openActiveRideOnce(Ride? ride) {
@@ -95,10 +141,11 @@ class _DriverBottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isBusy = state.connection == HomeConnection.connecting;
+    final colors = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.white,
+      color: colors.surface,
       elevation: 16,
-      shadowColor: Colors.black.withValues(alpha: 0.16),
+      shadowColor: colors.shadow.withValues(alpha: 0.16),
       child: SafeArea(
         top: false,
         child: SizedBox(
@@ -106,8 +153,8 @@ class _DriverBottomBar extends StatelessWidget {
           child: Row(
             children: [
               _BottomBarItem(
-                icon: Icons.map_outlined,
-                selectedIcon: Icons.map_rounded,
+                icon: Icons.home_outlined,
+                selectedIcon: Icons.home_rounded,
                 label: 'الرئيسية',
                 selected: selectedIndex == 0,
                 onTap: () => onDestinationSelected(0),
@@ -166,7 +213,8 @@ class _BottomBarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppTheme.primaryGreen : const Color(0xFF6E766F);
+    final colors = Theme.of(context).colorScheme;
+    final color = selected ? colors.primary : colors.onSurfaceVariant;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -211,6 +259,7 @@ class _WorkPowerButton extends StatelessWidget {
     final isOnline = state.isOnline;
     final color = isOnline ? AppTheme.primaryGreen : const Color(0xFFE53935);
     final label = isOnline ? 'متصل' : 'متوقف';
+    final foreground = Theme.of(context).colorScheme.onSurface;
 
     return InkWell(
       onTap: onPressed,
@@ -256,8 +305,8 @@ class _WorkPowerButton extends StatelessWidget {
               isBusy ? 'جارٍ الاتصال' : label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF1F2C24),
+              style: TextStyle(
+                color: foreground,
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),

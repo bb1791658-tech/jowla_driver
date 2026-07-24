@@ -14,10 +14,7 @@ void main() {
     expect(driverStatusFromBackend('OFFLINE'), DriverAccountStatus.offline);
     expect(driverStatusFromBackend('BUSY'), DriverAccountStatus.busy);
     expect(driverStatusFromBackend('ON_TRIP'), DriverAccountStatus.onTrip);
-    expect(
-      driverStatusFromBackend('SUSPENDED'),
-      DriverAccountStatus.suspended,
-    );
+    expect(driverStatusFromBackend('SUSPENDED'), DriverAccountStatus.suspended);
     expect(driverStatusFromBackend('SOMETHING'), isNull);
   });
 
@@ -35,6 +32,7 @@ void main() {
       'name': 'سائق تجريبي',
       'phone': '+9647700000001',
       'status': 'APPROVED',
+      'photoUrl': 'https://example.com/driver.jpg',
       'vehicles': [
         {
           'plateNumber': 'بغداد 12345',
@@ -47,16 +45,23 @@ void main() {
       'services': [
         {
           'isActive': true,
-          'serviceType': {'code': 'taxi', 'nameAr': 'تكسي'},
+          'serviceType': {'code': 'taxi', 'nameAr': 'داخل المدينة'},
+        },
+        {
+          'isActive': true,
+          'serviceType': {'code': 'intercity', 'nameAr': 'بين المحافظات'},
         },
       ],
+      'activeServiceType': {'code': 'intercity', 'nameAr': 'بين المحافظات'},
       'user': {'id': 'u1', 'phone': '+9647700000001'},
     });
     expect(account.profile.id, 'driver-1');
     expect(account.profile.status, DriverAccountStatus.approved);
+    expect(account.profile.photoUrl, 'https://example.com/driver.jpg');
     expect(account.activeVehicle?.plateNumber, 'بغداد 12345');
     expect(account.activeVehicle?.summary, contains('تويوتا'));
-    expect(account.serviceNames, ['تكسي']);
+    expect(account.serviceNames, ['داخل المدينة', 'بين المحافظات']);
+    expect(account.activeService?.code, 'intercity');
   });
 
   test('ملف السائق يُخزن ويُستعاد دون فقدان الحالة', () {
@@ -65,9 +70,11 @@ void main() {
       name: 'سائق',
       phone: '+9647700000001',
       status: DriverAccountStatus.online,
+      photoUrl: 'https://example.com/driver.jpg',
     );
     final restored = DriverProfile.fromJson(profile.toJson());
     expect(restored.id, profile.id);
     expect(restored.status, DriverAccountStatus.online);
+    expect(restored.photoUrl, profile.photoUrl);
   });
 }

@@ -16,6 +16,7 @@ import 'package:jowla_driver/features/rides/data/backend_ride_repository.dart';
 import 'package:jowla_driver/features/rides/domain/models/ride.dart';
 import 'package:jowla_driver/features/rides/domain/models/ride_offer.dart';
 import 'package:jowla_driver/features/trip/application/trip_controller.dart';
+import 'package:jowla_driver/features/wallet/data/backend_wallet_repository.dart';
 
 import 'support/fakes.dart';
 
@@ -55,9 +56,12 @@ Position _position(double lat, double lng) => Position(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late FakeRealtimeService realtime;
   late FakeRideRepository rides;
   late FakeDriverRepository drivers;
+  late FakeWalletRepository wallet;
   late FakeAuthRepository auth;
   late StreamController<Position> positions;
   late ProviderContainer container;
@@ -76,12 +80,14 @@ void main() {
     drivers = FakeDriverRepository(
       account: const DriverAccount(profile: profile),
     );
+    wallet = FakeWalletRepository();
     positions = StreamController<Position>.broadcast();
     container = ProviderContainer(
       overrides: [
         realtimeServiceProvider.overrideWithValue(realtime),
         rideRepositoryProvider.overrideWithValue(rides),
         driverRepositoryProvider.overrideWithValue(drivers),
+        walletRepositoryProvider.overrideWithValue(wallet),
         authRepositoryProvider.overrideWithValue(auth),
         sessionStoreProvider.overrideWithValue(
           SessionStore(InMemorySecureStore()),
@@ -123,12 +129,30 @@ void main() {
 
     expect(realtime.sentLocations, hasLength(1));
     expect(realtime.sentLocations.single['lat'], 30.95);
+    expect(drivers.locationUpdates, hasLength(1));
+    expect(drivers.locationUpdates.single['lat'], 30.95);
+    expect(container.read(driverHomeControllerProvider).wallet?.balance, 12500);
 
     positions.add(_position(30.96, 46.97));
     await settle();
     expect(realtime.sentLocations, hasLength(2));
     expect(realtime.sentLocations.last['lat'], 30.96);
     expect(realtime.sentLocations.last['heading'], 90);
+    expect(drivers.locationUpdates, hasLength(2));
+    expect(drivers.locationUpdates.last['lat'], 30.96);
+  });
+
+  test('إعادة اتصال Socket تعيد نشر آخر موقع وتثبته عبر REST', () async {
+    final controller = await ready();
+    await controller.goOnline();
+    await settle();
+
+    realtime.connectionsController.add(null);
+    await settle();
+
+    expect(realtime.sentLocations, hasLength(2));
+    expect(drivers.locationUpdates, hasLength(2));
+    expect(drivers.locationUpdates.last['lat'], 30.95);
   });
 
   test('Offline: لا يُرسل أي موقع بعد الفصل', () async {
@@ -169,14 +193,72 @@ void main() {
       container.read(driverHomeControllerProvider).activeOffer?.offerId,
       'offer-1',
     );
+    expect(
+      container.read(driverHomeControllerProvider).offerVisibleUntil['offer-1'],
+      isNotNull,
+    );
 
     final accepted = await controller.acceptOffer();
     expect(accepted, isTrue);
     expect(rides.accepted, ['offer-1']);
+    expect(realtime.sentLocations, hasLength(2));
+    expect(realtime.sentLocations.last['lat'], 30.95);
+    expect(realtime.sentLocations.last['lng'], 46.95);
     expect(container.read(driverHomeControllerProvider).activeOffer, isNull);
     expect(
-      container.read(tripControllerProvider).valueOrNull?.status,
+      container.read(tripControllerProvider).value?.status,
       RideStatus.driverAccepted,
+    );
+  });
+
+  test('قبول العرض لا يستبدل اسم الراكب الحقيقي ببيانات عرض ناقصة', () async {
+    rides.offers = [
+      RideOffer.fromRestOffer({
+        'id': 'offer-1',
+        'rideId': 'ride-1',
+        'status': 'PENDING',
+        'expiresAt': DateTime.now()
+            .add(const Duration(seconds: 30))
+            .toIso8601String(),
+        'ride': {
+          'id': 'ride-1',
+          'status': 'SEARCHING_DRIVER',
+          'pickupLat': 30.96,
+          'pickupLng': 46.97,
+          'dropoffLat': 30.97,
+          'dropoffLng': 46.99,
+          'user': {'id': 'user-1', 'phone': '+9647711111111'},
+        },
+      }),
+    ];
+    rides.current = Ride.fromJson({
+      'id': 'ride-1',
+      'status': 'DRIVER_ACCEPTED',
+      'pickupLat': 30.96,
+      'pickupLng': 46.97,
+      'dropoffLat': 30.97,
+      'dropoffLng': 46.99,
+      'user': {
+        'id': 'user-1',
+        'fullName': 'محمد حسن',
+        'phone': '+9647711111111',
+      },
+    });
+
+    final controller = await ready();
+    await controller.goOnline();
+    await settle();
+
+    expect(
+      container.read(driverHomeControllerProvider).activeOffer?.offerId,
+      'offer-1',
+    );
+
+    final accepted = await controller.acceptOffer();
+    expect(accepted, isTrue);
+    expect(
+      container.read(tripControllerProvider).value?.rider?.displayName,
+      'محمد حسن',
     );
   });
 
@@ -337,6 +419,57 @@ void main() {
     expect(
       container.read(driverHomeControllerProvider).activeOffer?.offerId,
       'offer-7',
+    );
+  });
+
+  test('REST فارغ لا يمسح عرض Socket حديث قبل انتهاء نافذة العرض', () async {
+    final controller = await ready();
+    await controller.goOnline();
+    await settle();
+
+    realtime.offersController.add({
+      'rideId': 'ride-socket',
+      'offerId': 'offer-socket',
+      'expiresAt': DateTime.now()
+          .add(const Duration(seconds: 30))
+          .toIso8601String(),
+      'pickup': {'lat': 30.96, 'lng': 46.97},
+    });
+    await settle();
+    expect(
+      container.read(driverHomeControllerProvider).activeOffer?.offerId,
+      'offer-socket',
+    );
+
+    rides.offers = const [];
+    realtime.connectionsController.add(null);
+    await settle();
+    await settle();
+
+    expect(
+      container.read(driverHomeControllerProvider).activeOffer?.offerId,
+      'offer-socket',
+    );
+  });
+
+  test('فرق ساعة الجهاز لا يسقط عرض Socket قبل عرضه للسائق', () async {
+    final controller = await ready();
+    await controller.goOnline();
+    await settle();
+
+    realtime.offersController.add({
+      'rideId': 'ride-skew',
+      'offerId': 'offer-skew',
+      'expiresAt': DateTime.now()
+          .subtract(const Duration(seconds: 10))
+          .toIso8601String(),
+      'pickup': {'lat': 30.96, 'lng': 46.97},
+    });
+    await settle();
+
+    expect(
+      container.read(driverHomeControllerProvider).activeOffer?.offerId,
+      'offer-skew',
     );
   });
 

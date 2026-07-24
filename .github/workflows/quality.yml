@@ -1,0 +1,60 @@
+name: Flutter quality gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: driver-flutter-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test --coverage
+      - name: Enforce line coverage floor
+        run: |
+          lines=$(awk -F: '/^LF:/{found+=$2} /^LH:/{hit+=$2} END{if(found==0) print 0; else printf "%.2f", hit*100/found}' coverage/lcov.info)
+          echo "Line coverage: ${lines}%"
+          # Start below the measured baseline and raise this floor as coverage grows.
+          awk -v value="${lines}" 'BEGIN { exit(value < 68) }'
+      - name: Build Android release artifact
+        run: >-
+          flutter build apk --release
+          --dart-define=BACKEND_ORIGIN=https://api.example.invalid
+          --dart-define=MAP_ORIGIN=https://maps.example.invalid
+          --dart-define=GEOCODING_BASE_URL=https://geocoding.example.invalid
+          --dart-define=ROAD_ROUTE_BASE_URL=https://route.example.invalid
+          --dart-define=PUSH_NOTIFICATIONS_ENABLED=false
+
+  ios-build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build iOS without signing
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=BACKEND_ORIGIN=https://api.example.invalid
+          --dart-define=MAP_ORIGIN=https://maps.example.invalid
+          --dart-define=GEOCODING_BASE_URL=https://geocoding.example.invalid
+          --dart-define=ROAD_ROUTE_BASE_URL=https://route.example.invalid
+          --dart-define=PUSH_NOTIFICATIONS_ENABLED=false

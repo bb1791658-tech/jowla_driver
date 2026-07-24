@@ -52,7 +52,7 @@ void main() {
     );
   });
 
-  test('التسلسل الكامل: وصول → بدء → إنهاء مع العمولة والصافي', () async {
+  test('التسلسل الكامل: وصول → بدء → إيقاف → استئناف → إنهاء', () async {
     rides.current = sampleRide(status: RideStatus.driverAccepted);
     rides.transitionBuilder = (rideId, status) {
       final base = sampleRide(id: rideId, status: status);
@@ -78,6 +78,18 @@ void main() {
       RideStatus.driverArrived,
     );
     expect(await controller.startTrip(), isTrue);
+    expect(await controller.pauseTrip(), isTrue);
+    expect(
+      container.read(tripControllerProvider).value?.status,
+      RideStatus.tripPaused,
+    );
+    expect(rides.pauseCalls, 1);
+    expect(await controller.resumeTrip(), isTrue);
+    expect(
+      container.read(tripControllerProvider).value?.status,
+      RideStatus.tripStarted,
+    );
+    expect(rides.resumeCalls, 1);
     expect(await controller.completeTrip(), isTrue);
     final completed = container.read(tripControllerProvider).value;
     expect(completed?.status, RideStatus.completed);
@@ -135,6 +147,36 @@ void main() {
     );
   });
 
+  test('بدء الرحلة يزامن الخادم ولا يكرر الطلب إذا كانت بدأت فعلاً', () async {
+    rides.current = sampleRide(status: RideStatus.driverArrived);
+    await container.read(tripControllerProvider.future);
+    rides.current = sampleRide(status: RideStatus.tripStarted);
+
+    final controller = container.read(tripControllerProvider.notifier);
+    expect(await controller.startTrip(), isTrue);
+
+    expect(rides.startCalls, 0);
+    expect(
+      container.read(tripControllerProvider).value?.status,
+      RideStatus.tripStarted,
+    );
+  });
+
+  test('إتمام الرحلة يزامن الحالة القديمة قبل إرسال طلب الإنهاء', () async {
+    rides.current = sampleRide(status: RideStatus.driverArrived);
+    await container.read(tripControllerProvider.future);
+    rides.current = sampleRide(status: RideStatus.tripStarted);
+
+    final controller = container.read(tripControllerProvider.notifier);
+    expect(await controller.completeTrip(), isTrue);
+
+    expect(rides.completeCalls, 1);
+    expect(
+      container.read(tripControllerProvider).value?.status,
+      RideStatus.completed,
+    );
+  });
+
   test('فشل الانتقال يعرض الخطأ ويبقي حالة الرحلة السابقة', () async {
     rides.current = sampleRide(status: RideStatus.driverAccepted);
     await container.read(tripControllerProvider.future);
@@ -143,6 +185,26 @@ void main() {
     expect(await controller.markArrived(), isFalse);
     final state = container.read(tripControllerProvider);
     expect(state.hasError, isTrue);
-    expect(state.valueOrNull?.status, RideStatus.driverAccepted);
+    expect(state.value?.status, RideStatus.driverAccepted);
+  });
+
+  test('لا يبدأ التوجه في رحلة مجدولة قبل سماح Backend', () async {
+    rides.current = Ride.fromJson({
+      'id': 'ride-1',
+      'status': 'DRIVER_ASSIGNED',
+      'pickupLat': 30.96,
+      'pickupLng': 46.97,
+      'dropoffLat': 33.31,
+      'dropoffLng': 44.36,
+      'serviceTypeCode': 'intercity_full_vehicle',
+      'scheduledAt': '2030-01-02T08:00:00Z',
+      'canStart': false,
+    });
+    await container.read(tripControllerProvider.future);
+    final result = await container
+        .read(tripControllerProvider.notifier)
+        .markArrived();
+    expect(result, isFalse);
+    expect(rides.arrivedCalls, 0);
   });
 }

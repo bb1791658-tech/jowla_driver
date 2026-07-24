@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/notifications/push_registration_service.dart';
 import '../../../core/providers.dart';
 import '../data/backend_auth_repository.dart';
 import '../domain/models/driver_session.dart';
@@ -8,26 +11,37 @@ import '../domain/models/driver_session.dart';
 /// حالة الجلسة: ملف السائق المسجل أو null.
 final authSessionProvider =
     AsyncNotifierProvider<AuthSessionController, DriverProfile?>(
-  AuthSessionController.new,
-);
+      AuthSessionController.new,
+    );
 
 class AuthSessionController extends AsyncNotifier<DriverProfile?> {
   @override
   Future<DriverProfile?> build() async {
     final subscription = ref.read(sessionEventsProvider).expired.listen((_) {
       ref.read(realtimeServiceProvider).disconnect();
+      unawaited(ref.read(pushRegistrationServiceProvider).deactivate());
       state = const AsyncData(null);
     });
     ref.onDispose(subscription.cancel);
-    return ref.read(authRepositoryProvider).restoreSession();
+    final session = await ref.read(authRepositoryProvider).restoreSession();
+    if (session != null) {
+      unawaited(ref.read(pushRegistrationServiceProvider).activate());
+    }
+    return session;
   }
 
   void sessionStarted(DriverProfile driver) {
+    state = AsyncData(driver);
+    unawaited(ref.read(pushRegistrationServiceProvider).activate());
+  }
+
+  void profileUpdated(DriverProfile driver) {
     state = AsyncData(driver);
   }
 
   Future<void> logout() async {
     ref.read(realtimeServiceProvider).disconnect();
+    await ref.read(pushRegistrationServiceProvider).deactivate();
     await ref.read(authRepositoryProvider).logout();
     state = const AsyncData(null);
   }
@@ -43,6 +57,7 @@ class LoginState {
     this.error,
     this.mockCode,
     this.otpExpiresAt,
+    this.requestId = '',
   });
 
   final AuthStep step;
@@ -53,6 +68,7 @@ class LoginState {
   /// يرجعه Backend في التطوير فقط عند OTP_EXPOSE_MOCK_CODE=true.
   final String? mockCode;
   final DateTime? otpExpiresAt;
+  final String requestId;
 
   LoginState copyWith({
     AuthStep? step,
@@ -61,37 +77,38 @@ class LoginState {
     String? error,
     String? mockCode,
     DateTime? otpExpiresAt,
+    String? requestId,
     bool clearError = false,
-  }) =>
-      LoginState(
-        step: step ?? this.step,
-        phone: phone ?? this.phone,
-        isLoading: isLoading ?? this.isLoading,
-        error: clearError ? null : error ?? this.error,
-        mockCode: mockCode ?? this.mockCode,
-        otpExpiresAt: otpExpiresAt ?? this.otpExpiresAt,
-      );
+  }) => LoginState(
+    step: step ?? this.step,
+    phone: phone ?? this.phone,
+    isLoading: isLoading ?? this.isLoading,
+    error: clearError ? null : error ?? this.error,
+    mockCode: mockCode ?? this.mockCode,
+    otpExpiresAt: otpExpiresAt ?? this.otpExpiresAt,
+    requestId: requestId ?? this.requestId,
+  );
 }
 
 final loginControllerProvider =
     NotifierProvider.autoDispose<LoginController, LoginState>(
-  LoginController.new,
-);
+      LoginController.new,
+    );
 
-class LoginController extends AutoDisposeNotifier<LoginState> {
+class LoginController extends Notifier<LoginState> {
   @override
   LoginState build() => const LoginState();
 
   Future<bool> requestOtp(String phone) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final result =
-          await ref.read(authRepositoryProvider).requestOtp(phone);
+      final result = await ref.read(authRepositoryProvider).requestOtp(phone);
       state = LoginState(
         step: AuthStep.otp,
         phone: phone,
-        mockCode: kDebugMode ? result.mockCode : null,
+        mockCode: kReleaseMode ? null : result.mockCode,
         otpExpiresAt: result.expiresAt,
+        requestId: result.requestId,
       );
       return true;
     } catch (error) {
@@ -103,9 +120,12 @@ class LoginController extends AutoDisposeNotifier<LoginState> {
   Future<bool> verifyOtp(String code) async {
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final driver = await ref.read(authRepositoryProvider).verifyOtp(
+      final driver = await ref
+          .read(authRepositoryProvider)
+          .verifyOtp(
             phone: state.phone,
             code: code,
+            requestId: state.requestId,
             platform: _platform,
           );
       ref.read(authSessionProvider.notifier).sessionStarted(driver);
@@ -120,8 +140,8 @@ class LoginController extends AutoDisposeNotifier<LoginState> {
   void changePhone() => state = const LoginState();
 
   String get _platform => switch (defaultTargetPlatform) {
-        TargetPlatform.iOS || TargetPlatform.macOS => 'ios',
-        TargetPlatform.android => 'android',
-        _ => 'web',
-      };
+    TargetPlatform.iOS || TargetPlatform.macOS => 'ios',
+    TargetPlatform.android => 'android',
+    _ => 'web',
+  };
 }

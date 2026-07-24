@@ -33,6 +33,12 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Generated Iraq map and routing datasets (recreated by maps/bootstrap.sh).
+/maps/data/*
+!/maps/data/.gitkeep
+/maps/geocoding-data/*
+!/maps/geocoding-data/.gitkeep
+
 # Symbolication related
 app.*.symbols
 

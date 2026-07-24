@@ -1,0 +1,85 @@
+name: jowla-maps
+
+services:
+  tiles_blue:
+    image: maptiler/tileserver-gl:v5.6.0
+    command: ["-c", "/config/tileserver-config.json"]
+    restart: unless-stopped
+    environment:
+      TILESERVER_GL_ALLOWED_HOSTS: "localhost,127.0.0.1,192.168.0.151,MacBook-Air-bas.local,tiles_blue,tiles_green"
+    volumes:
+      - ${MAPS_BLUE_DATA:-./data/current}:/data:ro
+      - ./tileserver-config.json:/config/tileserver-config.json:ro
+
+  routing_blue:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command:
+      - osrm-routed
+      - --algorithm
+      - mld
+      - /data/iraq-latest.osrm
+    restart: unless-stopped
+    volumes:
+      - ${MAPS_BLUE_DATA:-./data/current}:/data:ro
+ 
+  tiles_green:
+    image: maptiler/tileserver-gl:v5.6.0
+    command: ["-c", "/config/tileserver-config.json"]
+    restart: unless-stopped
+    environment:
+      TILESERVER_GL_ALLOWED_HOSTS: "localhost,127.0.0.1,192.168.0.151,MacBook-Air-bas.local,tiles_blue,tiles_green"
+    volumes:
+      - ${MAPS_GREEN_DATA:-./data/current}:/data:ro
+      - ./tileserver-config.json:/config/tileserver-config.json:ro
+
+  routing_green:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command:
+      - osrm-routed
+      - --algorithm
+      - mld
+      - /data/iraq-latest.osrm
+    restart: unless-stopped
+    volumes:
+      - ${MAPS_GREEN_DATA:-./data/current}:/data:ro
+
+  gateway:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      - tiles_blue
+      - routing_blue
+    volumes:
+      - ./runtime/upstreams.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:8080"
+      - "5001:5001"
+      - "7070:7070"
+
+  geocoding:
+    profiles: ["geocoding"]
+    image: mediagis/nominatim:5.3
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      PBF_PATH: /nominatim/data/iraq-latest.osm.pbf
+      IMPORT_STYLE: full
+      IMPORT_WIKIPEDIA: "false"
+      UPDATE_MODE: none
+      FREEZE: "true"
+      THREADS: "4"
+      GUNICORN_WORKERS: "2"
+      POSTGRES_SHARED_BUFFERS: 512MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 1GB
+      POSTGRES_AUTOVACUUM_WORK_MEM: 256MB
+      POSTGRES_WORK_MEM: 32MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 2GB
+      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-jowla-local-change-on-production}
+    volumes:
+      - ./geocoding-data:/nominatim/data
+      - nominatim-db:/var/lib/postgresql/16/main
+    expose:
+      - "8080"
+
+volumes:
+  nominatim-db:

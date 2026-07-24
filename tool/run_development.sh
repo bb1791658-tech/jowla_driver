@@ -38,22 +38,30 @@ targets_android_emulator() {
   return 1
 }
 
-backend_origin="${BACKEND_ORIGIN:-}"
-if [[ -z "${backend_origin}" ]]; then
+backend_origins="${BACKEND_ORIGINS:-}"
+if [[ -z "${backend_origins}" && -n "${BACKEND_ORIGIN:-}" ]]; then
+  backend_origins="${BACKEND_ORIGIN}"
+fi
+
+if [[ -z "${backend_origins}" ]]; then
+  lan_ip="$(detect_lan_ip)"
   if targets_android_emulator "$@"; then
-    backend_origin="http://10.0.2.2:3000"
-  else
-    lan_ip="$(detect_lan_ip)"
+    backend_origins="http://10.0.2.2:3000,http://localhost:3000"
     if [[ -n "${lan_ip}" ]]; then
-      backend_origin="http://${lan_ip}:3000"
+      backend_origins="${backend_origins},http://${lan_ip}:3000"
     fi
+  else
+    if [[ -n "${lan_ip}" ]]; then
+      backend_origins="http://${lan_ip}:3000,"
+    fi
+    backend_origins="${backend_origins}http://localhost:3000,http://10.0.2.2:3000"
   fi
 fi
 
 flutter_args=(--dart-define-from-file=config/development.json)
-if [[ -n "${backend_origin}" ]]; then
-  echo "Using Jowla backend: ${backend_origin}"
-  flutter_args+=(--dart-define=BACKEND_ORIGIN="${backend_origin}")
+if [[ -n "${backend_origins}" ]]; then
+  echo "Trying Jowla backends: ${backend_origins}"
+  flutter_args+=(--dart-define=BACKEND_ORIGINS="${backend_origins}")
 else
   echo "Using app backend fallback. Set BACKEND_ORIGIN if this device cannot reach localhost."
 fi

@@ -3,9 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/auth_controller.dart';
 
-/// تسجيل الدخول الحقيقي عبر WhatsApp OTP.
+/// تسجيل الدخول عبر OTP.
 /// Backend يتحقق من الرقم بصيغة دولية (IsPhoneNumber في auth.dto.ts)،
-/// لذلك يُطلب الرقم بصيغة +964... ويرفض التطبيق أي صيغة أخرى قبل الإرسال.
+/// لذلك يحوّل التطبيق الأرقام العراقية المحلية إلى صيغة +964... قبل الإرسال.
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -15,7 +15,7 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _phone = TextEditingController(text: '+964');
+  final _phone = TextEditingController();
   final _otp = TextEditingController();
 
   @override
@@ -56,12 +56,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: 8),
                     Text(
                       isPhone
-                          ? 'أدخل رقم واتساب المسجل في جولة بصيغة دولية'
-                          : 'أرسلنا رمز التحقق عبر واتساب إلى ${state.phone}',
+                          ? 'أدخل رقم الهاتف المعتمد في جولة'
+                          : 'أدخل رمز التحقق الخاص بالرقم ${state.phone}',
                       textAlign: TextAlign.center,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyLarge?.copyWith(color: Colors.black54),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 28),
                     if (!isPhone && state.mockCode != null) ...[
@@ -90,13 +90,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         textDirection: TextDirection.ltr,
                         textAlign: TextAlign.center,
                         decoration: const InputDecoration(
-                          hintText: '+9647XXXXXXXXX',
-                          prefixIcon: Icon(Icons.phone_rounded),
+                          hintText: '7701234567',
+                          prefixIcon: _IraqDialCodePrefix(),
                         ),
                         validator: (value) {
-                          final phone = value?.trim() ?? '';
-                          if (!RegExp(r'^\+[1-9]\d{7,14}$').hasMatch(phone)) {
-                            return 'أدخل الرقم بصيغة دولية، مثال +9647701234567';
+                          if (_normalizePhone(value) == null) {
+                            return 'أدخل رقمًا عراقيًا صحيحًا، مثال 7701234567 أو 07701234567';
                           }
                           return null;
                         },
@@ -173,11 +172,68 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final controller = ref.read(loginControllerProvider.notifier);
     final state = ref.read(loginControllerProvider);
     if (state.step == AuthStep.phone) {
-      await controller.requestOtp(_phone.text.trim());
+      final phone = _normalizePhone(_phone.text)!;
+      await controller.requestOtp(phone);
     } else {
       // نجاح التحقق يحدّث authSessionProvider والراوتر يعيد التوجيه
       // تلقائيًا إلى /home عبر redirect.
       await controller.verifyOtp(_otp.text.trim());
     }
   }
+}
+
+class _IraqDialCodePrefix extends StatelessWidget {
+  const _IraqDialCodePrefix();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsetsDirectional.only(start: 12, end: 10),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('🇮🇶', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(width: 6),
+        Text(
+          '+964',
+          textDirection: TextDirection.ltr,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
+String? _normalizePhone(String? value) {
+  var phone = _normalizeDigits(
+    value ?? '',
+  ).replaceAll(RegExp(r'[\s\-\(\)]'), '').trim();
+  if (phone.isEmpty) return null;
+
+  if (phone.startsWith('+964')) {
+    phone = phone.substring(4);
+  } else if (phone.startsWith('00964')) {
+    phone = phone.substring(5);
+  } else if (phone.startsWith('964')) {
+    phone = phone.substring(3);
+  } else if (RegExp(r'^07\d{9}$').hasMatch(phone)) {
+    phone = phone.substring(1);
+  }
+
+  return RegExp(r'^7\d{9}$').hasMatch(phone) ? '+964$phone' : null;
+}
+
+String _normalizeDigits(String value) {
+  const arabicZero = 0x0660;
+  const persianZero = 0x06F0;
+  return value.runes.map((rune) {
+    if (rune >= arabicZero && rune <= arabicZero + 9) {
+      return String.fromCharCode(0x30 + rune - arabicZero);
+    }
+    if (rune >= persianZero && rune <= persianZero + 9) {
+      return String.fromCharCode(0x30 + rune - persianZero);
+    }
+    return String.fromCharCode(rune);
+  }).join();
 }

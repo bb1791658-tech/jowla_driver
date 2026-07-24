@@ -12,7 +12,7 @@ class BackendLoadingScreen extends StatelessWidget {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 18),
-            Text('جارٍ الاتصال بخادم جولة...'),
+            Text('جارٍ التحقق من اتصال جولة...'),
           ],
         ),
       ),
@@ -47,13 +47,23 @@ class BackendUnavailableScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 18),
                 Text(
-                  'الخادم غير متاح',
+                  'جولة غير متصل بالخادم',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 10),
-                Text(message, textAlign: TextAlign.center),
+                const Text(
+                  'يحتاج تطبيق السائق إلى الإنترنت وخادم جولة ليستقبل '
+                  'الرحلات بأمان. سيتحقق التطبيق تلقائيًا من عودة الاتصال.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 const SizedBox(height: 22),
                 FilledButton.icon(
                   onPressed: onRetry,

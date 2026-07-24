@@ -9,6 +9,8 @@ import 'package:jowla_driver/features/driver/domain/models/driver_account.dart';
 import 'package:jowla_driver/features/rides/domain/models/ride.dart';
 import 'package:jowla_driver/features/rides/domain/models/ride_offer.dart';
 import 'package:jowla_driver/features/rides/domain/ride_repository.dart';
+import 'package:jowla_driver/features/wallet/domain/models/driver_wallet.dart';
+import 'package:jowla_driver/features/wallet/domain/wallet_repository.dart';
 
 class InMemorySecureStore implements SecureKeyValueStore {
   final values = <String, String>{};
@@ -28,6 +30,11 @@ class FakeRealtimeService implements RealtimeService {
   final expirationsController =
       StreamController<Map<String, dynamic>>.broadcast();
   final rideEventsController = StreamController<RealtimeEvent>.broadcast();
+  final intercityEventsController = StreamController<RealtimeEvent>.broadcast();
+  final communicationEventsController =
+      StreamController<RealtimeEvent>.broadcast();
+  final driverUpdatesController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final connectionsController = StreamController<void>.broadcast();
   final sentLocations = <Map<String, double?>>[];
   var connectCalls = 0;
@@ -45,6 +52,17 @@ class FakeRealtimeService implements RealtimeService {
   Stream<RealtimeEvent> get rideEvents => rideEventsController.stream;
 
   @override
+  Stream<RealtimeEvent> get intercityEvents => intercityEventsController.stream;
+
+  @override
+  Stream<RealtimeEvent> get communicationEvents =>
+      communicationEventsController.stream;
+
+  @override
+  Stream<Map<String, dynamic>> get driverUpdates =>
+      driverUpdatesController.stream;
+
+  @override
   Stream<void> get connections => connectionsController.stream;
 
   @override
@@ -52,6 +70,7 @@ class FakeRealtimeService implements RealtimeService {
 
   @override
   Future<void> connect() async {
+    if (connected) return;
     connectCalls++;
     connected = true;
   }
@@ -72,6 +91,13 @@ class FakeRealtimeService implements RealtimeService {
   }
 
   @override
+  void sendCallSignal({
+    required String callId,
+    required String kind,
+    required Map<String, dynamic> payload,
+  }) {}
+
+  @override
   void disconnect() {
     disconnectCalls++;
     connected = false;
@@ -82,6 +108,9 @@ class FakeRealtimeService implements RealtimeService {
     offersController.close();
     expirationsController.close();
     rideEventsController.close();
+    intercityEventsController.close();
+    communicationEventsController.close();
+    driverUpdatesController.close();
     connectionsController.close();
   }
 }
@@ -90,14 +119,18 @@ class FakeAuthRepository implements AuthRepository {
   FakeAuthRepository({this.driver});
 
   DriverProfile? driver;
-  OtpRequestResult otpResult =
-      const OtpRequestResult(requestId: 'req-1', mockCode: '123456');
+  OtpRequestResult otpResult = const OtpRequestResult(
+    requestId: 'req-1',
+    mockCode: '123456',
+  );
   Object? requestError;
+  final requestedPhones = <String>[];
   var logoutCalls = 0;
 
   @override
   Future<OtpRequestResult> requestOtp(String phone) async {
     if (requestError != null) throw requestError!;
+    requestedPhones.add(phone);
     return otpResult;
   }
 
@@ -105,9 +138,11 @@ class FakeAuthRepository implements AuthRepository {
   Future<DriverProfile> verifyOtp({
     required String phone,
     required String code,
+    required String requestId,
     required String platform,
   }) async {
-    final profile = driver ??
+    final profile =
+        driver ??
         const DriverProfile(
           id: 'driver-1',
           name: 'سائق اختبار',
@@ -151,7 +186,29 @@ class FakeDriverRepository implements DriverRepository {
             : DriverAccountStatus.offline,
       ),
       vehicles: account.vehicles,
-      serviceNames: account.serviceNames,
+      services: account.services,
+      activeService: account.activeService,
+    );
+    return account;
+  }
+
+  @override
+  Future<DriverAccount> chooseActiveService({
+    required String driverId,
+    required String serviceTypeCode,
+  }) async {
+    DriverService? activeService;
+    for (final service in account.services) {
+      if (service.code == serviceTypeCode) {
+        activeService = service;
+        break;
+      }
+    }
+    account = DriverAccount(
+      profile: account.profile,
+      vehicles: account.vehicles,
+      services: account.services,
+      activeService: activeService,
     );
     return account;
   }
@@ -168,12 +225,33 @@ class FakeDriverRepository implements DriverRepository {
   }
 }
 
+class FakeWalletRepository implements WalletRepository {
+  FakeWalletRepository({this.wallet = const DriverWallet(balance: 12500)});
+
+  DriverWallet wallet;
+  Object? error;
+  var calls = 0;
+
+  @override
+  Future<DriverWallet> currentWallet() async {
+    calls++;
+    if (error != null) throw error!;
+    return wallet;
+  }
+}
+
 class FakeRideRepository implements RideRepository {
   Ride? current;
   List<RideOffer> offers = [];
   final accepted = <String>[];
   final rejected = <String>[];
   Object? acceptError;
+  var arrivedCalls = 0;
+  var startCalls = 0;
+  var pauseCalls = 0;
+  var resumeCalls = 0;
+  var completeCalls = 0;
+  var cancelCalls = 0;
   Ride Function(String rideId, RideStatus status)? transitionBuilder;
 
   @override
@@ -210,20 +288,40 @@ class FakeRideRepository implements RideRepository {
   }
 
   @override
-  Future<Ride> driverArrived(String rideId) async =>
-      current = _build(rideId, RideStatus.driverArrived);
+  Future<Ride> driverArrived(String rideId) async {
+    arrivedCalls++;
+    return current = _build(rideId, RideStatus.driverArrived);
+  }
 
   @override
-  Future<Ride> startTrip(String rideId) async =>
-      current = _build(rideId, RideStatus.tripStarted);
+  Future<Ride> startTrip(String rideId) async {
+    startCalls++;
+    return current = _build(rideId, RideStatus.tripStarted);
+  }
 
   @override
-  Future<Ride> completeTrip(String rideId) async =>
-      current = _build(rideId, RideStatus.completed);
+  Future<Ride> pauseTrip(String rideId) async {
+    pauseCalls++;
+    return current = _build(rideId, RideStatus.tripPaused);
+  }
 
   @override
-  Future<Ride> cancelRide(String rideId) async =>
-      current = _build(rideId, RideStatus.cancelled);
+  Future<Ride> resumeTrip(String rideId) async {
+    resumeCalls++;
+    return current = _build(rideId, RideStatus.tripStarted);
+  }
+
+  @override
+  Future<Ride> completeTrip(String rideId) async {
+    completeCalls++;
+    return current = _build(rideId, RideStatus.completed);
+  }
+
+  @override
+  Future<Ride> cancelRide(String rideId) async {
+    cancelCalls++;
+    return current = _build(rideId, RideStatus.cancelled);
+  }
 
   Ride _build(String rideId, RideStatus status) {
     final builder = transitionBuilder;
@@ -232,24 +330,27 @@ class FakeRideRepository implements RideRepository {
   }
 }
 
-Ride sampleRide({String id = 'ride-1', RideStatus status = RideStatus.driverAccepted}) =>
-    Ride.fromJson({
-      'id': id,
-      'status': switch (status) {
-        RideStatus.driverAccepted => 'DRIVER_ACCEPTED',
-        RideStatus.driverArrived => 'DRIVER_ARRIVED',
-        RideStatus.tripStarted => 'TRIP_STARTED',
-        RideStatus.completed => 'COMPLETED',
-        RideStatus.cancelled => 'CANCELLED',
-        _ => 'SEARCHING_DRIVER',
-      },
-      'pickupLat': '30.9601000',
-      'pickupLng': '46.9769000',
-      'dropoffLat': '30.9700000',
-      'dropoffLng': '46.9900000',
-      'estimatedFare': '5000.00',
-      'distanceKm': '3.250',
-      'durationMinutes': 9,
-      'currency': 'IQD',
-      'user': {'id': 'user-1', 'name': 'راكب', 'phone': '+9647711111111'},
-    });
+Ride sampleRide({
+  String id = 'ride-1',
+  RideStatus status = RideStatus.driverAccepted,
+}) => Ride.fromJson({
+  'id': id,
+  'status': switch (status) {
+    RideStatus.driverAccepted => 'DRIVER_ACCEPTED',
+    RideStatus.driverArrived => 'DRIVER_ARRIVED',
+    RideStatus.tripStarted => 'TRIP_STARTED',
+    RideStatus.tripPaused => 'TRIP_PAUSED',
+    RideStatus.completed => 'COMPLETED',
+    RideStatus.cancelled => 'CANCELLED',
+    _ => 'SEARCHING_DRIVER',
+  },
+  'pickupLat': '30.9601000',
+  'pickupLng': '46.9769000',
+  'dropoffLat': '30.9700000',
+  'dropoffLng': '46.9900000',
+  'estimatedFare': '5000.00',
+  'distanceKm': '3.250',
+  'durationMinutes': 9,
+  'currency': 'IQD',
+  'user': {'id': 'user-1', 'name': 'راكب', 'phone': '+9647711111111'},
+});

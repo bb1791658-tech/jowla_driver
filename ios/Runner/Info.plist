@@ -42,6 +42,12 @@
 	<string>يستخدم جولة للسائق الشبكة المحلية للاتصال بخادم التطوير أثناء الاختبار.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>يستخدم جولة موقعك لعرضك على الخريطة واستقبال الرحلات القريبة أثناء العمل.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>يستخدم جولة الميكروفون عند إجراء مكالمة صوتية مرتبطة بالرحلة.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

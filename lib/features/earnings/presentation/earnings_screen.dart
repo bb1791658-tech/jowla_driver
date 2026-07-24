@@ -8,12 +8,13 @@ class EarningsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('الأرباح')),
-        body: const BackendEmptyState(
-          icon: Icons.bar_chart_rounded,
-          title: 'تقارير الأرباح غير متوفرة حاليًا',
-          message: 'لا يوفر خادم جولة الحالي واجهة لأرباح السائق. '
-              'يظهر ملخص كل رحلة (الأجرة والعمولة والصافي) فور إكمالها.',
-        ),
-      );
+    appBar: AppBar(title: const Text('الأرباح')),
+    body: const BackendEmptyState(
+      icon: Icons.bar_chart_rounded,
+      title: 'تقارير الأرباح غير متوفرة حاليًا',
+      message:
+          'لا يوفر خادم جولة الحالي واجهة لأرباح السائق. '
+          'يظهر ملخص كل رحلة (الأجرة والعمولة والصافي) فور إكمالها.',
+    ),
+  );
 }

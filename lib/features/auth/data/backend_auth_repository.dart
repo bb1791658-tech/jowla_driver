@@ -1,7 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/config/app_config.dart';
 import '../../../core/constants/api_paths.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../../core/network/api_client.dart';
@@ -18,7 +16,8 @@ final authRepositoryProvider = Provider<AuthRepository>(
 );
 
 /// المصادقة الحقيقية عبر WhatsApp OTP وفق auth.controller.ts:
-/// - POST /auth/otp/request {phone} → {requestId, expiresAt, mockCode?}.
+/// - POST /auth/otp/request {phone, accountType: 'DRIVER'}
+///   → {requestId, expiresAt, mockCode?}.
 /// - POST /auth/otp/verify {phone, code, deviceKey, platform,
 ///   accountType: 'DRIVER'} → {accessToken, refreshToken, driver, user, device}.
 /// - DELETE /auth/sessions/current لتسجيل الخروج من هذا الجهاز.
@@ -27,24 +26,13 @@ class BackendAuthRepository implements AuthRepository {
 
   final ApiClient _client;
   final SessionStore _store;
-  static const _devAccessToken = 'jowla-debug-access-token';
-  static const _devRefreshToken = 'jowla-debug-refresh-token';
 
   @override
   Future<OtpRequestResult> requestOtp(String phone) async {
-    if (kDebugMode &&
-        AppConfig.enableLocalDevAuth &&
-        phone == AppConfig.devWhatsappPhone) {
-      return OtpRequestResult(
-        requestId: 'debug-request',
-        expiresAt: DateTime.now().add(const Duration(minutes: 5)),
-        mockCode: AppConfig.devOtpCode,
-      );
-    }
     try {
       final response = await _client.dio.post<Map<String, dynamic>>(
         ApiPaths.requestOtp,
-        data: {'phone': phone},
+        data: {'phone': phone, 'accountType': 'DRIVER'},
       );
       return OtpRequestResult.fromJson(response.data ?? const {});
     } catch (error) {
@@ -56,27 +44,9 @@ class BackendAuthRepository implements AuthRepository {
   Future<DriverProfile> verifyOtp({
     required String phone,
     required String code,
+    required String requestId,
     required String platform,
   }) async {
-    if (kDebugMode &&
-        AppConfig.enableLocalDevAuth &&
-        phone == AppConfig.devWhatsappPhone &&
-        code == AppConfig.devOtpCode) {
-      const driver = DriverProfile(
-        id: AppConfig.devDriverId,
-        name: 'سائق التطوير',
-        phone: AppConfig.devWhatsappPhone,
-        status: DriverAccountStatus.approved,
-      );
-      await _store.saveSession(
-        const DriverSession(
-          accessToken: _devAccessToken,
-          refreshToken: _devRefreshToken,
-          driver: driver,
-        ),
-      );
-      return driver;
-    }
     try {
       final deviceKey = await _store.getOrCreateInstallationId();
       final response = await _client.dio.post<Map<String, dynamic>>(
@@ -84,6 +54,7 @@ class BackendAuthRepository implements AuthRepository {
         data: {
           'phone': phone,
           'code': code,
+          'requestId': requestId,
           'deviceKey': deviceKey,
           'platform': platform,
           'accountType': 'DRIVER',
@@ -118,10 +89,6 @@ class BackendAuthRepository implements AuthRepository {
   @override
   Future<DriverProfile?> restoreSession() async {
     final session = await _store.readSession();
-    if (session?.accessToken == _devAccessToken && !kDebugMode) {
-      await _store.clearSession();
-      return null;
-    }
     return session?.driver;
   }
 
@@ -130,7 +97,7 @@ class BackendAuthRepository implements AuthRepository {
     try {
       await _client.dio.delete<void>(ApiPaths.currentSession);
     } catch (_) {
-      // تسجيل الخروج المحلي يكتمل حتى لو تعذر الوصول إلى الخادم.
+      // نمسح بيانات الجلسة من الجهاز حتى لو انقطع الاتصال أثناء الخروج.
     } finally {
       await _store.clearSession();
     }

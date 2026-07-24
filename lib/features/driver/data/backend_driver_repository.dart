@@ -49,6 +49,22 @@ class BackendDriverRepository implements DriverRepository {
   }
 
   @override
+  Future<DriverAccount> chooseActiveService({
+    required String driverId,
+    required String serviceTypeCode,
+  }) async {
+    try {
+      final response = await _client.dio.patch<Map<String, dynamic>>(
+        ApiPaths.driverActiveService(driverId),
+        data: {'serviceTypeCode': serviceTypeCode},
+      );
+      return DriverAccount.fromJson(response.data ?? const {});
+    } catch (error) {
+      throw ApiClient.mapError(error);
+    }
+  }
+
+  @override
   Future<void> updateLocation({
     required String driverId,
     required double lat,

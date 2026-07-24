@@ -23,6 +23,10 @@ abstract interface class RideRepository {
   /// POST /rides/{id}/start.
   Future<Ride> startTrip(String rideId);
 
+  Future<Ride> pauseTrip(String rideId);
+
+  Future<Ride> resumeTrip(String rideId);
+
   /// POST /rides/{id}/complete — يرجع الرحلة مع payment
   /// (amount, commissionAmount) لعرض الملخص والعمولة والصافي.
   Future<Ride> completeTrip(String rideId);

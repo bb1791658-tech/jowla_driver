@@ -45,32 +45,68 @@ class TripController extends AsyncNotifier<Ride?> {
     unawaited(_persistRide(ride));
   }
 
-  Future<void> refresh() async {
+  Future<Ride?> refresh() async {
     final result = await AsyncValue.guard(_loadCurrentRide);
-    if (result.hasError) return;
+    if (result.hasError) return state.value;
     final refreshed = result.value;
-    final current = state.valueOrNull;
+    final current = state.value;
     // GET /rides/driver/current يرجع الرحلات النشطة فقط؛ إذا كانت لدينا
     // رحلة منتهية معروضة للملخص فلا نمحوها بالتحديث الفارغ.
     if (refreshed == null && current != null && current.status.isFinished) {
-      return;
+      return current;
     }
     if (refreshed != null || current == null || !current.status.isFinished) {
-      final next = refreshed?.copyWith(rider: current?.rider);
+      final next = refreshed?.withMergedRider(current?.rider);
       state = AsyncData(next);
       await _persistRide(next);
+      return next;
     }
+    return current;
   }
 
-  Future<bool> markArrived() =>
-      _transition((repo, id) => repo.driverArrived(id));
+  Future<bool> markArrived() => _transition(
+    (repo, id) => repo.driverArrived(id),
+    allowedStatuses: const {RideStatus.driverAccepted},
+    canTransition: (ride) => ride.canStart,
+    alreadyAcceptedStatuses: const {
+      RideStatus.driverArrived,
+      RideStatus.tripStarted,
+    },
+  );
 
-  Future<bool> startTrip() => _transition((repo, id) => repo.startTrip(id));
+  Future<bool> startTrip() => _transition(
+    (repo, id) => repo.startTrip(id),
+    allowedStatuses: const {RideStatus.driverArrived},
+    canTransition: (ride) => ride.canStart,
+    alreadyAcceptedStatuses: const {RideStatus.tripStarted},
+  );
 
-  Future<bool> completeTrip() =>
-      _transition((repo, id) => repo.completeTrip(id));
+  Future<bool> pauseTrip() => _transition(
+    (repo, id) => repo.pauseTrip(id),
+    allowedStatuses: const {RideStatus.tripStarted},
+    alreadyAcceptedStatuses: const {RideStatus.tripPaused},
+  );
 
-  Future<bool> cancelRide() => _transition((repo, id) => repo.cancelRide(id));
+  Future<bool> resumeTrip() => _transition(
+    (repo, id) => repo.resumeTrip(id),
+    allowedStatuses: const {RideStatus.tripPaused},
+    alreadyAcceptedStatuses: const {RideStatus.tripStarted},
+  );
+
+  Future<bool> completeTrip() => _transition(
+    (repo, id) => repo.completeTrip(id),
+    allowedStatuses: const {RideStatus.tripStarted, RideStatus.tripPaused},
+  );
+
+  Future<bool> cancelRide() => _transition(
+    (repo, id) => repo.cancelRide(id),
+    allowedStatuses: const {
+      RideStatus.driverAccepted,
+      RideStatus.driverArrived,
+      RideStatus.tripStarted,
+      RideStatus.tripPaused,
+    },
+  );
 
   Future<void> clear() async {
     state = const AsyncData(null);
@@ -78,36 +114,61 @@ class TripController extends AsyncNotifier<Ride?> {
   }
 
   Future<bool> _transition(
-    Future<Ride> Function(RideRepository repo, String rideId) action,
-  ) async {
-    final current = state.valueOrNull;
+    Future<Ride> Function(RideRepository repo, String rideId) action, {
+    Set<RideStatus>? allowedStatuses,
+    Set<RideStatus> alreadyAcceptedStatuses = const {},
+    bool Function(Ride ride)? canTransition,
+  }) async {
+    var current = state.value;
     if (current == null) return false;
+    current = await _syncRideById(current);
+    if (current == null) return false;
+    if (alreadyAcceptedStatuses.contains(current.status)) return true;
+    if (canTransition != null && !canTransition(current)) return false;
+    if (allowedStatuses != null && !allowedStatuses.contains(current.status)) {
+      return false;
+    }
+    final transitionRide = current;
+    // ignore: invalid_use_of_internal_member
     state = const AsyncLoading<Ride?>().copyWithPrevious(state);
     final result = await AsyncValue.guard(
-      () => action(ref.read(rideRepositoryProvider), current.id),
+      () => action(ref.read(rideRepositoryProvider), transitionRide.id),
     );
     if (result.hasError) {
+      final synced = await _syncRideById(transitionRide);
       state = AsyncError<Ride?>(
         result.error!,
         result.stackTrace!,
-      ).copyWithPrevious(AsyncData(current));
+        // ignore: invalid_use_of_internal_member
+      ).copyWithPrevious(AsyncData(synced ?? transitionRide));
       return false;
     }
-    final next = result.requireValue.copyWith(rider: current.rider);
+    final next = result.requireValue.withMergedRider(transitionRide.rider);
     state = AsyncData(next);
     await _persistRide(next);
     return true;
   }
 
+  Future<Ride?> _syncRideById(Ride current) async {
+    final result = await AsyncValue.guard(
+      () => ref.read(rideRepositoryProvider).getRide(current.id),
+    );
+    if (result.hasError) return current;
+    final synced = result.requireValue.withMergedRider(current.rider);
+    state = AsyncData(synced);
+    await _persistRide(synced);
+    return synced;
+  }
+
   void _handleRideEvent(RealtimeEvent event) {
-    final current = state.valueOrNull;
+    final current = state.value;
     if (current == null) return;
     final payload = event.payload;
     final rideId = (payload['rideId'] ?? payload['id'] ?? '').toString();
     if (rideId.isNotEmpty && rideId != current.id) return;
     try {
       final ride = Ride.fromJson(payload);
-      final next = ride.copyWith(rider: current.rider);
+      final next = ride.withMergedRider(current.rider);
       state = AsyncData(next);
       unawaited(_persistRide(next));
     } on FormatException {

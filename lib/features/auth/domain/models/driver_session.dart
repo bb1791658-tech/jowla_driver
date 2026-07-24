@@ -26,15 +26,15 @@ DriverAccountStatus? driverStatusFromBackend(String? value) {
 
 extension DriverAccountStatusLabel on DriverAccountStatus {
   String get arabicLabel => switch (this) {
-        DriverAccountStatus.pendingApproval => 'قيد المراجعة',
-        DriverAccountStatus.approved => 'معتمد',
-        DriverAccountStatus.rejected => 'مرفوض',
-        DriverAccountStatus.online => 'متصل',
-        DriverAccountStatus.offline => 'غير متصل',
-        DriverAccountStatus.busy => 'مشغول',
-        DriverAccountStatus.onTrip => 'في رحلة',
-        DriverAccountStatus.suspended => 'موقوف',
-      };
+    DriverAccountStatus.pendingApproval => 'قيد المراجعة',
+    DriverAccountStatus.approved => 'معتمد',
+    DriverAccountStatus.rejected => 'مرفوض',
+    DriverAccountStatus.online => 'متصل',
+    DriverAccountStatus.offline => 'غير متصل',
+    DriverAccountStatus.busy => 'مشغول',
+    DriverAccountStatus.onTrip => 'في رحلة',
+    DriverAccountStatus.suspended => 'موقوف',
+  };
 
   /// حالات يعتبرها Backend متاحة للعمل (socket-auth.service.ts يرفض
   /// PENDING_APPROVAL/REJECTED/SUSPENDED).
@@ -50,35 +50,71 @@ class DriverProfile {
     required this.name,
     required this.phone,
     this.status,
+    this.photoUrl,
   });
 
-  factory DriverProfile.fromJson(Map<String, dynamic> json) => DriverProfile(
-        id: json['id']?.toString() ?? '',
-        name: json['name']?.toString() ?? '',
-        phone: json['phone']?.toString() ?? '',
-        status: driverStatusFromBackend(json['status']?.toString()),
-      );
+  factory DriverProfile.fromJson(Map<String, dynamic> json) {
+    final userJson = json['user'];
+    final user = userJson is Map
+        ? Map<String, dynamic>.from(userJson)
+        : const <String, dynamic>{};
+    return DriverProfile(
+      id: json['id']?.toString() ?? user['id']?.toString() ?? '',
+      name: _firstNonEmpty([
+        json['name'],
+        json['fullName'],
+        user['name'],
+        user['fullName'],
+      ]),
+      phone: _firstNonEmpty([json['phone'], user['phone']]),
+      status: driverStatusFromBackend(json['status']?.toString()),
+      photoUrl: _nullableFirstNonEmpty([
+        json['photoUrl'],
+        json['profileImageUrl'],
+        json['avatarUrl'],
+        json['imageUrl'],
+        user['photoUrl'],
+        user['profileImageUrl'],
+        user['avatarUrl'],
+        user['imageUrl'],
+      ]),
+    );
+  }
 
   final String id;
   final String name;
   final String phone;
   final DriverAccountStatus? status;
+  final String? photoUrl;
 
   String get displayName => name.isEmpty ? phone : name;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'phone': phone,
-        if (status != null) 'status': _statusToBackend(status!),
-      };
+    'id': id,
+    'name': name,
+    'phone': phone,
+    if (status != null) 'status': _statusToBackend(status!),
+    if (photoUrl != null) 'photoUrl': photoUrl,
+  };
 
   DriverProfile copyWith({DriverAccountStatus? status}) => DriverProfile(
-        id: id,
-        name: name,
-        phone: phone,
-        status: status ?? this.status,
-      );
+    id: id,
+    name: name,
+    phone: phone,
+    status: status ?? this.status,
+    photoUrl: photoUrl,
+  );
+
+  static String _firstNonEmpty(List<Object?> values) =>
+      _nullableFirstNonEmpty(values) ?? '';
+
+  static String? _nullableFirstNonEmpty(List<Object?> values) {
+    for (final value in values) {
+      final text = value?.toString().trim();
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
 
   static String _statusToBackend(DriverAccountStatus status) =>
       switch (status) {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../config/app_config.dart';
@@ -43,11 +44,20 @@ class LocationService {
   }
 
   Stream<Position> positions() {
-    return Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
+    return Geolocator.getPositionStream(locationSettings: _streamSettings());
+  }
+
+  LocationSettings _streamSettings() {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: AppConfig.locationDistanceFilterMeters,
-      ),
+        intervalDuration: AppConfig.locationHeartbeat,
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: AppConfig.locationDistanceFilterMeters,
     );
   }
 

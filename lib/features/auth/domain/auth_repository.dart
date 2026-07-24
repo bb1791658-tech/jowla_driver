@@ -6,6 +6,7 @@ abstract interface class AuthRepository {
   Future<DriverProfile> verifyOtp({
     required String phone,
     required String code,
+    required String requestId,
     required String platform,
   });
 

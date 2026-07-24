@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/router/app_router.dart';
+import 'core/router/app_navigator.dart';
 import 'core/startup/app_startup_controller.dart';
 import 'core/theme/app_theme.dart';
 import 'shared/screens/backend_gate_screen.dart';
+import 'features/communications/presentation/communication_navigation_bridge.dart';
 
 class JowlaDriverApp extends ConsumerWidget {
   const JowlaDriverApp({super.key});
@@ -14,11 +15,6 @@ class JowlaDriverApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final startup = ref.watch(appStartupControllerProvider);
-    // في التطوير لا تحبس الواجهة خلف فحص الصحة؛ تبقى طلبات البيانات الحقيقية
-    // مرتبطة بالخادم، بينما يمكن اختبار التنقل وحساب التطوير عند توقفه.
-    if (kDebugMode) {
-      return _buildApp(routerConfig: ref.watch(appRouterProvider));
-    }
     return startup.when(
       data: (_) => _buildApp(routerConfig: ref.watch(appRouterProvider)),
       loading: () => _buildApp(home: const BackendLoadingScreen()),
@@ -51,8 +47,15 @@ class JowlaDriverApp extends ConsumerWidget {
         supportedLocales: supportedLocales,
         localizationsDelegates: localizationsDelegates,
         theme: AppTheme.light,
+        themeMode: ThemeMode.light,
+        scaffoldMessengerKey: rootScaffoldMessengerKey,
         routerConfig: routerConfig,
-        builder: rtl,
+        builder: (context, child) => rtl(
+          context,
+          CommunicationNavigationBridge(
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
       );
     }
     return MaterialApp(
@@ -62,6 +65,7 @@ class JowlaDriverApp extends ConsumerWidget {
       supportedLocales: supportedLocales,
       localizationsDelegates: localizationsDelegates,
       theme: AppTheme.light,
+      themeMode: ThemeMode.light,
       home: home,
       builder: rtl,
     );

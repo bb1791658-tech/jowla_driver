@@ -4,7 +4,7 @@ import 'package:jowla_driver/features/rides/domain/models/ride_offer.dart';
 
 void main() {
   group('RideStatus', () {
-    test('يقبل حالات prisma RideStatus الثماني فقط', () {
+    test('يقبل حالات Backend العامة وأسماء الدورة الموحدة', () {
       expect(rideStatusFromBackend('PENDING'), RideStatus.pending);
       expect(
         rideStatusFromBackend('SEARCHING_DRIVER'),
@@ -22,7 +22,7 @@ void main() {
         rideStatusFromBackend('NO_DRIVER_FOUND'),
         RideStatus.noDriverFound,
       );
-      expect(rideStatusFromBackend('PAUSED'), isNull);
+      expect(rideStatusFromBackend('TRIP_PAUSED'), RideStatus.tripPaused);
       expect(rideStatusFromBackend(''), isNull);
     });
 
@@ -30,6 +30,7 @@ void main() {
       expect(RideStatus.driverAccepted.isActiveForDriver, isTrue);
       expect(RideStatus.driverArrived.isActiveForDriver, isTrue);
       expect(RideStatus.tripStarted.isActiveForDriver, isTrue);
+      expect(RideStatus.tripPaused.isActiveForDriver, isTrue);
       expect(RideStatus.completed.isActiveForDriver, isFalse);
       expect(RideStatus.searchingDriver.isActiveForDriver, isFalse);
     });
@@ -67,6 +68,46 @@ void main() {
       expect(ride.payment?.netAmount, 5000);
     });
 
+    test('يقرأ اسم الراكب الحقيقي من صيغ Backend البديلة', () {
+      final ride = Ride.fromJson({
+        'id': 'ride-1',
+        'status': 'DRIVER_ACCEPTED',
+        'pickupLat': 30.96,
+        'pickupLng': 46.97,
+        'dropoffLat': 30.97,
+        'dropoffLng': 46.99,
+        'user': {
+          'id': 'u1',
+          'firstName': 'أحمد',
+          'lastName': 'علي',
+          'phone': '+9647711111111',
+        },
+      });
+
+      expect(ride.rider?.displayName, 'أحمد علي');
+    });
+
+    test('يقرأ بيانات الراكب من passenger وملف الراكب الداخلي', () {
+      final ride = Ride.fromJson({
+        'id': 'ride-1',
+        'status': 'DRIVER_ACCEPTED',
+        'pickupLat': 30.96,
+        'pickupLng': 46.97,
+        'dropoffLat': 30.97,
+        'dropoffLng': 46.99,
+        'passenger': {
+          'passengerId': 'u1',
+          'passengerProfile': {
+            'fullName': 'محمد حسن',
+            'phoneNumber': '+9647711111111',
+          },
+        },
+      });
+
+      expect(ride.rider?.displayName, 'محمد حسن');
+      expect(ride.rider?.phone, '+9647711111111');
+    });
+
     test('يرفض الاستجابة الناقصة', () {
       expect(
         () => Ride.fromJson({'id': 'x', 'status': 'TRIP_STARTED'}),
@@ -88,8 +129,9 @@ void main() {
 
   group('RideOffer', () {
     test('يفك حمولة ride:offer:new كما يبثها rides.service.create', () {
-      final expiresAt =
-          DateTime.now().add(const Duration(seconds: 30)).toIso8601String();
+      final expiresAt = DateTime.now()
+          .add(const Duration(seconds: 30))
+          .toIso8601String();
       final offer = RideOffer.fromSocketPayload({
         'rideId': 'ride-1',
         'offerId': 'offer-1',

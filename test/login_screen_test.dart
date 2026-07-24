@@ -8,45 +8,69 @@ import 'package:jowla_driver/features/auth/presentation/login_screen.dart';
 import 'support/fakes.dart';
 
 Widget _app(FakeAuthRepository auth) => ProviderScope(
-      overrides: [authRepositoryProvider.overrideWithValue(auth)],
-      child: const MaterialApp(
-        locale: Locale('ar', 'IQ'),
-        supportedLocales: [Locale('ar', 'IQ')],
-        localizationsDelegates: [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        home: Directionality(
-          textDirection: TextDirection.rtl,
-          child: LoginScreen(),
-        ),
-      ),
-    );
+  overrides: [authRepositoryProvider.overrideWithValue(auth)],
+  child: const MaterialApp(
+    locale: Locale('ar', 'IQ'),
+    supportedLocales: [Locale('ar', 'IQ')],
+    localizationsDelegates: [
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    home: Directionality(
+      textDirection: TextDirection.rtl,
+      child: LoginScreen(),
+    ),
+  ),
+);
 
 void main() {
-  testWidgets('يرفض رقمًا بغير الصيغة الدولية قبل مراسلة الخادم',
-      (tester) async {
+  testWidgets('يقبل الرقم المحلي ويرسله للخادم بصيغة دولية', (tester) async {
     final auth = FakeAuthRepository();
     await tester.pumpWidget(_app(auth));
 
     expect(find.text('أهلًا بك كابتن'), findsOneWidget);
+    expect(find.text('🇮🇶'), findsOneWidget);
+    expect(find.text('+964'), findsOneWidget);
     await tester.enterText(find.byType(TextFormField), '07701234567');
     await tester.tap(find.text('إرسال رمز واتساب'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('أدخل الرقم بصيغة دولية'),
-      findsOneWidget,
-    );
+    expect(find.text('تحقق من رقمك'), findsOneWidget);
+    expect(auth.requestedPhones, ['+9647701234567']);
   });
 
-  testWidgets('نجاح طلب الرمز ينقل إلى خطوة OTP ويعرض رمز التطوير',
-      (tester) async {
+  testWidgets('يقبل الأرقام العربية ويحولها قبل طلب OTP', (tester) async {
+    final auth = FakeAuthRepository();
+    await tester.pumpWidget(_app(auth));
+
+    await tester.enterText(find.byType(TextFormField), '٠٧٧٠١٢٣٤٥٦٧');
+    await tester.tap(find.text('إرسال رمز واتساب'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('تحقق من رقمك'), findsOneWidget);
+    expect(auth.requestedPhones, ['+9647701234567']);
+  });
+
+  testWidgets('يقبل لصق الرقم المعتمد كاملًا مع رمز البلد', (tester) async {
     final auth = FakeAuthRepository();
     await tester.pumpWidget(_app(auth));
 
     await tester.enterText(find.byType(TextFormField), '+9647700000001');
+    await tester.tap(find.text('إرسال رمز واتساب'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('تحقق من رقمك'), findsOneWidget);
+    expect(auth.requestedPhones, ['+9647700000001']);
+  });
+
+  testWidgets('نجاح طلب الرمز ينقل إلى خطوة OTP ويعرض رمز التطوير', (
+    tester,
+  ) async {
+    final auth = FakeAuthRepository();
+    await tester.pumpWidget(_app(auth));
+
+    await tester.enterText(find.byType(TextFormField), '7700000001');
     await tester.tap(find.text('إرسال رمز واتساب'));
     await tester.pumpAndSettle();
 
@@ -65,7 +89,7 @@ void main() {
   testWidgets('رمز أقصر من 6 أرقام يُرفض محليًا', (tester) async {
     final auth = FakeAuthRepository();
     await tester.pumpWidget(_app(auth));
-    await tester.enterText(find.byType(TextFormField), '+9647700000001');
+    await tester.enterText(find.byType(TextFormField), '7700000001');
     await tester.tap(find.text('إرسال رمز واتساب'));
     await tester.pumpAndSettle();
 

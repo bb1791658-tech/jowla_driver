@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import '../config/app_config.dart';
 import '../constants/api_paths.dart';
 import '../errors/app_exception.dart';
+import '../services/backend_availability_events.dart';
 import '../services/session_events.dart';
 import '../storage/session_store.dart';
 
@@ -19,8 +20,9 @@ class ApiClient {
     this._sessionEvents, {
     Dio? client,
     Dio? refreshClient,
-  })  : dio = client ?? _buildDio(),
-        _refreshDio = refreshClient ?? _buildDio() {
+    this._availabilityEvents,
+  }) : dio = client ?? _buildDio(),
+       _refreshDio = refreshClient ?? _buildDio() {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -44,26 +46,31 @@ class ApiClient {
 
   final SessionStore _sessionStore;
   final SessionEvents _sessionEvents;
+  final BackendAvailabilityEvents? _availabilityEvents;
   final Dio _refreshDio;
   final Dio dio;
   Future<String?>? _activeRefresh;
 
   static Dio _buildDio() => Dio(
-        BaseOptions(
-          baseUrl: AppConfig.apiBaseUrl,
-          connectTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 15),
-          receiveTimeout: const Duration(seconds: 15),
-          headers: const {'Accept': 'application/json'},
-        ),
-      );
+    BaseOptions(
+      baseUrl: AppConfig.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 15),
+      sendTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+      headers: const {'Accept': 'application/json'},
+    ),
+  );
 
   Future<void> _handleError(
     DioException error,
     ErrorInterceptorHandler handler,
   ) async {
+    if (_isBackendUnavailable(error)) {
+      _availabilityEvents?.reportUnavailable();
+    }
     final request = error.requestOptions;
-    final canRefresh = error.response?.statusCode == 401 &&
+    final canRefresh =
+        error.response?.statusCode == 401 &&
         request.extra[_retriedKey] != true &&
         !_publicPaths.contains(request.path);
     if (!canRefresh) {
@@ -86,6 +93,12 @@ class ApiClient {
       handler.next(retryError);
     }
   }
+
+  static bool _isBackendUnavailable(DioException error) =>
+      error.type == DioExceptionType.connectionError ||
+      error.type == DioExceptionType.connectionTimeout ||
+      error.type == DioExceptionType.sendTimeout ||
+      error.type == DioExceptionType.receiveTimeout;
 
   Future<String?> _refreshAccessToken() async {
     final existing = _activeRefresh;
@@ -148,7 +161,9 @@ class ApiClient {
           return AppException(_translate(message));
         }
         if (message is List && message.isNotEmpty) {
-          return AppException(message.join('\n'));
+          return AppException(
+            message.map((item) => _translate('$item')).join('\n'),
+          );
         }
       }
       if (error.type == DioExceptionType.connectionError ||
@@ -168,28 +183,31 @@ class ApiClient {
 
   /// ترجمة رسائل Backend الإنجليزية المعروفة (كما وردت حرفيًا في الكود).
   static String _translate(String message) => switch (message) {
-        'Approved driver account is required' =>
-          'لا يوجد حساب سائق معتمد بهذا الرقم. راجع إدارة جولة لاعتماد حسابك.',
-        'OTP is invalid or expired' => 'رمز التحقق غير صحيح أو منتهي الصلاحية.',
-        'OTP is invalid or already used' =>
-          'رمز التحقق غير صالح أو استُخدم سابقًا.',
-        'User account is blocked' => 'هذا الحساب محظور. راجع إدارة جولة.',
-        'Driver is not approved for availability changes' =>
-          'حسابك غير معتمد لتغيير حالة التوفر.',
-        'Offer is no longer available' => 'انتهى هذا العرض ولم يعد متاحًا.',
-        'Offer is no longer pending' => 'تم الرد على هذا العرض سابقًا.',
-        'Offer has expired' => 'انتهت مهلة هذا العرض.',
-        'Another driver already accepted' => 'قبل سائق آخر هذه الرحلة.',
-        'Ride is not in trip_started state' =>
-          'لا يمكن إنهاء الرحلة قبل بدئها.',
-        'Ride cannot be cancelled in its current state' =>
-          'لا يمكن إلغاء الرحلة في حالتها الحالية.',
-        'Driver is not assigned' => 'هذه الرحلة غير مسندة إليك.',
-        'Ride not found' => 'الرحلة غير موجودة.',
-        'Offer not found' => 'العرض غير موجود.',
-        'Driver not found' => 'حساب السائق غير موجود.',
-        'WhatsApp OTP provider is not configured' =>
-          'خدمة إرسال رمز واتساب غير مهيأة في الخادم حاليًا.',
-        _ => message,
-      };
+    'Approved driver account is required' =>
+      'لا يوجد حساب سائق معتمد بهذا الرقم. راجع إدارة جولة لاعتماد حسابك.',
+    'OTP is invalid or expired' => 'رمز التحقق غير صحيح أو منتهي الصلاحية.',
+    'OTP is invalid or already used' =>
+      'رمز التحقق غير صالح أو استُخدم سابقًا.',
+    'User account is blocked' => 'هذا الحساب محظور. راجع إدارة جولة.',
+    'Driver is not approved for availability changes' =>
+      'حسابك غير معتمد لتغيير حالة التوفر.',
+    'Offer is no longer available' => 'انتهى هذا العرض ولم يعد متاحًا.',
+    'Offer is no longer pending' => 'تم الرد على هذا العرض سابقًا.',
+    'Offer has expired' => 'انتهت مهلة هذا العرض.',
+    'Another driver already accepted' => 'قبل سائق آخر هذه الرحلة.',
+    'Ride is not in trip_started state' => 'لا يمكن إنهاء الرحلة قبل بدئها.',
+    'Ride cannot be cancelled in its current state' =>
+      'لا يمكن إلغاء الرحلة في حالتها الحالية.',
+    'Driver is not assigned' => 'هذه الرحلة غير مسندة إليك.',
+    'Ride not found' => 'الرحلة غير موجودة.',
+    'Offer not found' => 'العرض غير موجود.',
+    'Driver not found' => 'حساب السائق غير موجود.',
+    'WhatsApp OTP provider is not configured' =>
+      'خدمة إرسال رمز واتساب غير مهيأة في الخادم حاليًا.',
+    'Iraqi phone number is required' =>
+      'أدخل رقم هاتف عراقيًا صحيحًا يبدأ بـ +9647.',
+    'Account type is required' =>
+      'نوع الحساب غير محدد في طلب تسجيل الدخول. حدّث التطبيق ثم حاول مرة أخرى.',
+    _ => message,
+  };
 }

@@ -8,12 +8,13 @@ class NotificationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('الإشعارات')),
-        body: const BackendEmptyState(
-          icon: Icons.notifications_none_rounded,
-          title: 'لا توجد قائمة إشعارات',
-          message: 'يرسل خادم جولة الإشعارات دفعًا (Push) فقط حاليًا، '
-              'ولا يوفر واجهة لعرض سجل الإشعارات داخل التطبيق.',
-        ),
-      );
+    appBar: AppBar(title: const Text('الإشعارات')),
+    body: const BackendEmptyState(
+      icon: Icons.notifications_none_rounded,
+      title: 'لا توجد قائمة إشعارات',
+      message:
+          'يرسل خادم جولة الإشعارات دفعًا (Push) فقط حاليًا، '
+          'ولا يوفر واجهة لعرض سجل الإشعارات داخل التطبيق.',
+    ),
+  );
 }

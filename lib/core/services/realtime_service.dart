@@ -25,6 +25,15 @@ abstract interface class RealtimeService {
   /// أحداث حالة الرحلة الموجهة لغرفة السائق.
   Stream<RealtimeEvent> get rideEvents;
 
+  /// تحديثات عروض المقاعد. الحمولة إشارة فقط؛ REST يبقى مصدر الحقيقة.
+  Stream<RealtimeEvent> get intercityEvents;
+
+  /// رسائل الرحلة وحالات وإشارات المكالمة الموجهة للمستخدم الحالي.
+  Stream<RealtimeEvent> get communicationEvents;
+
+  /// تحديثات ملف السائق التي يرسلها الأدمن أو الخادم.
+  Stream<Map<String, dynamic>> get driverUpdates;
+
   /// يبث عند كل اتصال ناجح (يشمل إعادة الاتصال) لإعادة المزامنة عبر REST.
   Stream<void> get connections;
 
@@ -41,6 +50,12 @@ abstract interface class RealtimeService {
     double? speed,
   });
 
+  void sendCallSignal({
+    required String callId,
+    required String kind,
+    required Map<String, dynamic> payload,
+  });
+
   void disconnect();
 
   void dispose();
@@ -54,14 +69,28 @@ class SocketRealtimeService implements RealtimeService {
     'ride:status:changed',
     'ride:driver:arrived',
     'ride:started',
+    'ride:paused',
+    'ride:resumed',
     'ride:completed',
     'ride:cancelled',
+  ];
+
+  static const intercityEventNames = <String>[
+    'intercity:offer:created',
+    'intercity:offer:updated',
+    'intercity:offer:removed',
+    'intercity:offer:full',
+    'intercity:booking:updated',
+    'intercity:booking:cancelled',
   ];
 
   final SessionStore _sessionStore;
   final _offers = StreamController<Map<String, dynamic>>.broadcast();
   final _offerExpirations = StreamController<Map<String, dynamic>>.broadcast();
   final _rideEvents = StreamController<RealtimeEvent>.broadcast();
+  final _intercityEvents = StreamController<RealtimeEvent>.broadcast();
+  final _communicationEvents = StreamController<RealtimeEvent>.broadcast();
+  final _driverUpdates = StreamController<Map<String, dynamic>>.broadcast();
   final _connections = StreamController<void>.broadcast();
   io.Socket? _socket;
 
@@ -73,6 +102,15 @@ class SocketRealtimeService implements RealtimeService {
 
   @override
   Stream<RealtimeEvent> get rideEvents => _rideEvents.stream;
+
+  @override
+  Stream<RealtimeEvent> get intercityEvents => _intercityEvents.stream;
+
+  @override
+  Stream<RealtimeEvent> get communicationEvents => _communicationEvents.stream;
+
+  @override
+  Stream<Map<String, dynamic>> get driverUpdates => _driverUpdates.stream;
 
   @override
   Stream<void> get connections => _connections.stream;
@@ -94,7 +132,7 @@ class SocketRealtimeService implements RealtimeService {
     final socket = io.io(
       AppConfig.realtimeUrl,
       io.OptionBuilder()
-          .setTransports(['websocket'])
+          .setTransports(['websocket', 'polling'])
           .disableAutoConnect()
           .enableReconnection()
           .setAuth({'token': token})
@@ -106,16 +144,45 @@ class SocketRealtimeService implements RealtimeService {
       'ride:offer:expired',
       (data) => _offerExpirations.add(_asMap(data)),
     );
+    socket.on('driver:updated', (data) => _driverUpdates.add(_asMap(data)));
     for (final eventName in rideEventNames) {
       socket.on(eventName, (data) {
         _rideEvents.add(RealtimeEvent(eventName, _asMap(data)));
       });
     }
+    for (final eventName in intercityEventNames) {
+      socket.on(eventName, (data) {
+        _intercityEvents.add(RealtimeEvent(eventName, _asMap(data)));
+      });
+    }
+    for (final eventName in const [
+      'chat:message:new',
+      'call:incoming',
+      'call:state',
+      'call:signal',
+    ]) {
+      socket.on(eventName, (data) {
+        _communicationEvents.add(RealtimeEvent(eventName, _asMap(data)));
+      });
+    }
     final connection = Completer<void>();
-    socket.onConnect((_) {
+    var connectionAnnounced = false;
+    void announceConnection() {
+      if (connectionAnnounced) return;
+      connectionAnnounced = true;
       _connections.add(null);
       if (!connection.isCompleted) connection.complete();
+    }
+
+    socket.on('connected', (_) => announceConnection());
+    socket.onConnect((_) {
+      Future<void>.delayed(const Duration(milliseconds: 300), () {
+        // بعض بيئات Socket.IO لا ترسل حدث connected المخصص. هذا بديل
+        // مؤجل، مع منع بث اتصالين وما يسببه من طلبات REST مكررة.
+        if (socket.connected) announceConnection();
+      });
     });
+    socket.onDisconnect((_) => connectionAnnounced = false);
     socket.onConnectError((error) {
       if (!connection.isCompleted) {
         connection.completeError(
@@ -152,6 +219,19 @@ class SocketRealtimeService implements RealtimeService {
     });
   }
 
+  @override
+  void sendCallSignal({
+    required String callId,
+    required String kind,
+    required Map<String, dynamic> payload,
+  }) {
+    _socket?.emit('call:signal', {
+      'callId': callId,
+      'kind': kind,
+      'payload': payload,
+    });
+  }
+
   Map<String, dynamic> _asMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
     if (data is Map) return Map<String, dynamic>.from(data);
@@ -170,6 +250,9 @@ class SocketRealtimeService implements RealtimeService {
     _offers.close();
     _offerExpirations.close();
     _rideEvents.close();
+    _intercityEvents.close();
+    _communicationEvents.close();
+    _driverUpdates.close();
     _connections.close();
   }
 }
